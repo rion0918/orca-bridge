@@ -1,0 +1,689 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Muse Orca Bridge",
+    "version": "0.5.0"
+  },
+  "paths": {
+    "/status": {
+      "get": {
+        "summary": "Status",
+        "operationId": "status_status_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/models": {
+      "get": {
+        "summary": "Models",
+        "operationId": "models_models_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents": {
+      "get": {
+        "summary": "Agents",
+        "operationId": "agents_agents_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks": {
+      "post": {
+        "summary": "Create",
+        "operationId": "create_tasks_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Task"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}": {
+      "get": {
+        "summary": "Get",
+        "operationId": "get_tasks__id__get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/result": {
+      "get": {
+        "summary": "Result",
+        "operationId": "result_tasks__id__result_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/logs": {
+      "get": {
+        "summary": "Logs",
+        "operationId": "logs_tasks__id__logs_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/cancel": {
+      "post": {
+        "summary": "Cancel",
+        "operationId": "cancel_tasks__id__cancel_post",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/retry": {
+      "post": {
+        "summary": "Retry",
+        "operationId": "retry_tasks__id__retry_post",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/policy": {
+      "get": {
+        "summary": "Policy",
+        "operationId": "policy_policy_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "summary": "List Projects",
+        "operationId": "list_projects_projects_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "New Project",
+        "operationId": "new_project_projects_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewProject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "NewProject": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "NewProject"
+      },
+      "Task": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Prompt"
+          },
+          "project": {
+            "type": "string",
+            "title": "Project",
+            "default": "sandbox"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "maximum": 900.0,
+            "minimum": 10.0,
+            "title": "Timeout Seconds",
+            "default": 300
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "development",
+              "deployment",
+              "spending"
+            ],
+            "title": "Operation",
+            "default": "development"
+          },
+          "execution_profile": {
+            "type": "string",
+            "enum": [
+              "sol_low",
+              "sol_high",
+              "sol_max",
+              "hydrogen_high",
+              "argon_high"
+            ],
+            "title": "Execution Profile",
+            "default": "sol_low"
+          },
+          "execution_reason": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Execution Reason",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "Task"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "servers": [
+    {
+      "url": "https://YOUR-BRIDGE-HOST.example"
+    }
+  ]
+}

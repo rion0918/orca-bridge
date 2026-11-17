@@ -1,0 +1,13 @@
+.venv/
+.env
+state/
+*.sqlite3
+*.jsonl
+.pytest_cache/
+__pycache__/
+
+.tools/
+
+.env.*
+!.env.example
+state/connector-endpoint.json

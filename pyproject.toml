@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+license = {text = "MIT"}
+name = "orca-bridge"
+version = "0.5.0"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+description = "Authenticated local bridge to Orca on macOS"
+
+[tool.setuptools]
+py-modules = ["bridge", "client", "copy_token", "model_policy", "process_control", "projects", "runner", "serve", "tunnel"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.lock"]}

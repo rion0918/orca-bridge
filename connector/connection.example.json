@@ -1,0 +1,11 @@
+{
+  "name": "Orca Bridge",
+  "base_url": "https://YOUR-BRIDGE-HOST.example",
+  "authentication": {
+    "type": "HTTP Bearer",
+    "secret_source": "user environment or secure credential store"
+  },
+  "default_headers": {
+    "User-Agent": "Muse-Orca-Bridge/0.2"
+  }
+}
