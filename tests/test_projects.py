@@ -1,4 +1,10 @@
 import subprocess
+import json
+from fnmatch import fnmatchcase
+from pathlib import Path
+import re
+import model_policy
+import runner
 import pytest
 import bridge
 import projects
@@ -90,3 +96,70 @@ def test_default_sandbox_state(catalog,monkeypatch,tmp_path,kind):
     monkeypatch.setattr(bridge,"PROJECTS",{"sandbox":p})
     item=catalog.get("/projects").json()["projects"][0]
     assert item["state"]==("ready" if kind=="directory" else "blocked")
+
+
+@pytest.fixture
+def env_policies(monkeypatch):
+    # Inspect generated settings only; no CLI or environment-file IO.
+    monkeypatch.setattr(model_policy.shutil, 'which', lambda _: '/fixture/codex')
+    command = runner.command(Path('/fixture/project'))
+    filesystem = next(arg for arg in command if arg.startswith('permissions.bridge.filesystem='))
+    patterns = re.findall(r'"([^"]+)"="deny"', filesystem)
+    command = model_policy.antigravity_command(Path('/fixture/project'), 'hydrogen_high')
+    settings = json.loads(command[command.index('--settings')+1])
+    deny = settings['permissions']['deny']
+    return (patterns, [rule[len('read_file('):-1] for rule in deny if rule.startswith('read_file(')])
+
+
+def env_matches(name, pattern):
+    return fnmatchcase(name, pattern) or (pattern.startswith('**/') and fnmatchcase(name, pattern[3:]))
+
+
+@pytest.mark.parametrize('name', ['.env.example', 'nested/.env.example'])
+def test_env_example_allowed_by_both_runner_policies(env_policies, name):
+    for patterns in env_policies:
+        assert not any(env_matches(name, pattern) for pattern in patterns)
+
+
+@pytest.mark.parametrize('name', [
+    '.env', '.env.local', '.env.production', '.envrc', '.environment',
+    '.env.', '.env.e', '.env.ex', '.env.exa', '.env.exam', '.env.examp', '.env.exampl',
+    '.env.example.bak', '.env.examples', '.env.Example',
+    *['.env.'+'example'[:i]+'x' for i in range(len('example'))],
+])
+@pytest.mark.parametrize('prefix', ['', 'nested/'])
+def test_other_env_names_denied_by_both_runner_policies(env_policies, name, prefix):
+    for patterns in env_policies:
+        assert any(env_matches(prefix+name, pattern) for pattern in patterns)
+
+
+@pytest.mark.parametrize('name', ['.env.example', 'nested/.env.example'])
+@pytest.mark.parametrize('template', [False, True])
+def test_project_file_allows_exact_env_example_without_io(monkeypatch, name, template):
+    root = Path('/fixture/project')
+    monkeypatch.setattr(Path, 'is_symlink', lambda _: False)
+    monkeypatch.setattr(Path, 'resolve', lambda path: path)
+    assert bridge.project_file(root, name, template=template) == root/name
+
+
+@pytest.mark.parametrize('name', [
+    '.env', '.env.local', '.env.example.bak', '.env.examples', '.envrc', '.env.e',
+    'nested/.env.local', '.env.local/.env.example', '.git/.env.example',
+    '../.env.example', '/absolute/.env.example',
+])
+@pytest.mark.parametrize('template', [False, True])
+def test_project_file_rejects_protected_paths_before_metadata(monkeypatch, name, template):
+    def unexpected_metadata(*args, **kwargs):
+        pytest.fail('Protected path reached filesystem metadata')
+    monkeypatch.setattr(Path, 'is_symlink', unexpected_metadata)
+    monkeypatch.setattr(Path, 'resolve', unexpected_metadata)
+    with pytest.raises(bridge.HTTPException) as caught:
+        bridge.project_file(Path('/fixture/project'), name, template=template)
+    assert caught.value.status_code == 422
+
+
+def test_env_example_still_rejects_symlinks(monkeypatch):
+    monkeypatch.setattr(Path, 'is_symlink', lambda _: True)
+    with pytest.raises(bridge.HTTPException) as caught:
+        bridge.project_file(Path('/fixture/project'), '.env.example')
+    assert caught.value.status_code == 422

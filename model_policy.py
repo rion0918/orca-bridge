@@ -8,6 +8,19 @@ import subprocess
 import threading
 import time
 
+# Disjoint globs deny every .env* basename except exactly .env.example.
+ENV_DENY_GLOBS=(
+ '**/.env', '**/.env[!.]*',
+ '**/.env.', '**/.env.[!e]*',
+ '**/.env.e', '**/.env.e[!x]*',
+ '**/.env.ex', '**/.env.ex[!a]*',
+ '**/.env.exa', '**/.env.exa[!m]*',
+ '**/.env.exam', '**/.env.exam[!p]*',
+ '**/.env.examp', '**/.env.examp[!l]*',
+ '**/.env.exampl', '**/.env.exampl[!e]*',
+ '**/.env.example?*',
+)
+
 PROFILES={
  'sol_low':{'agent':'codex','model':'gpt-6.1-sol','effort':'low','purpose':'routine implementation'},
  'sol_high':{'agent':'codex','model':'gpt-6.1-sol','effort':'high','purpose':'specifications and design'},
@@ -106,7 +119,7 @@ def antigravity_command(project,profile):
  config=PROFILES[profile]
  settings={'toolPermission':'proceed-in-sandbox','useG1Credits':False,
            'permissions':{'allow':[],'ask':[],'deny':['read_url(*)','execute_url(*)','mcp(*)',
-             'write_file(.git/)','read_file(.env)','read_file(**/.env*)','read_file(**/*.pem)']}}
+             'write_file(.git/)','read_file(.env)','read_file(**/*.pem)']+['read_file('+pattern+')' for pattern in ENV_DENY_GLOBS]}}
  return [shutil.which('agy') or 'agy','--model',config['model'],'--effort',config['effort'],
          '--mode','accept-edits','--sandbox','--disable-slash-commands','--settings',json.dumps(settings),
          '--input-format','stream-json','--output-format','stream-json']

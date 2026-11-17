@@ -43,7 +43,7 @@ async def lifespan(app):
     done.set()
     if thread: thread.join(timeout=25)
 
-app=FastAPI(title='Muse Orca Bridge',version='0.5.0',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
+app=FastAPI(title='Muse Orca Bridge',version='0.5.3',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
 
 class BodyLimit:
     def __init__(self,app): self.app=app
@@ -372,6 +372,220 @@ def list_projects():
 def new_project(request:NewProject):
     import projects
     return projects.create(request.name)
+
+
+class CommitRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    paths:list[str]=Field(min_length=1)
+    message:str=Field(min_length=1)
+
+class EnvironmentExampleRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    content:str
+
+class CleanupRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    paths:list[str]=Field(min_length=1)
+    recursive:bool=False
+    dry_run:bool=False
+    empty_tree:bool=False
+
+class EnvironmentExampleResponse(BaseModel):
+    project:str
+    content:str
+
+class RenameExampleResponse(BaseModel):
+    project:str
+    renamed_to:Literal['.env.example']
+
+class CommitResponse(BaseModel):
+    project:str
+    commit:str
+    files:int
+    published:Literal[False]
+
+class CleanupResponse(BaseModel):
+    project:str
+    paths:list[str]
+    dry_run:bool
+
+class PythonEnvironmentResponse(BaseModel):
+    project:str
+    python:str
+    offline:Literal[True]
+    tests_executed:Literal[False]
+
+@contextlib.contextmanager
+def project_io():
+    try: yield
+    except FileNotFoundError: raise HTTPException(404,'Project file not found')
+    except (OSError,UnicodeError): raise HTTPException(409,'Project filesystem operation failed')
+
+def project_file(root,name,template=False):
+    relative=Path(name)
+    if (not name or '\x00' in name or relative.is_absolute() or
+            relative==Path('.') or '..' in relative.parts):
+        raise HTTPException(422,'Path must be inside the project')
+    for part in relative.parts:
+        if (part in ('.git','.aws','.codex') or part.endswith('.pem') or
+                (part.startswith('.env') and part!='.env.example')):
+            raise HTTPException(422,'Protected project path')
+    target=root
+    for part in relative.parts:
+        target=target/part
+        if target.is_symlink(): raise HTTPException(422,'Symlink paths are not allowed')
+    if not target.resolve().is_relative_to(root):
+        raise HTTPException(422,'Path must be inside the project')
+    return target
+
+def example_content(content):
+    pattern=r'''(?ms)^([ \t]*(?:export[ \t]+)?(?:BRIDGE_TOKEN|BRIDGE_READ_TOKEN)[ \t]*=)[ \t]*(?:"(?:\\.|[^"\\])*(?:"|\Z)|'(?:\\.|[^'\\])*(?:'|\Z)|[^\r\n]*)[^\r\n]*'''
+    return re.sub(pattern,r'\1<redacted>',content)
+
+@app.post('/projects/{project}/environment-example',dependencies=[Depends(permission('write'))],response_model=RenameExampleResponse)
+def rename_environment_example(project:str):
+    root=project_path(project)
+    with project_io():
+        source=project_file(root,'ENVIRONMENT.example')
+        target=project_file(root,'.env.example',template=True)
+        if not source.is_file(): raise HTTPException(404,'Project file not found')
+        if target.exists(): raise HTTPException(409,'Environment example already exists')
+        source.rename(target)
+    return {'project':project,'renamed_to':'.env.example'}
+
+@app.get('/projects/{project}/environment-example',dependencies=[Depends(permission('read'))],response_model=EnvironmentExampleResponse)
+def get_environment_example(project:str):
+    root=project_path(project)
+    with project_io():
+        content=project_file(root,'.env.example',template=True).read_bytes().decode('utf-8')
+    return {'project':project,'content':example_content(content)}
+
+@app.put('/projects/{project}/environment-example',dependencies=[Depends(permission('write'))],response_model=EnvironmentExampleResponse)
+def put_environment_example(project:str,request:EnvironmentExampleRequest):
+    root=project_path(project)
+    with project_io():
+        project_file(root,'.env.example',template=True).write_bytes(request.content.encode('utf-8'))
+    return {'project':project,'content':example_content(request.content)}
+
+def local_git(root,*args):
+    # Hooks and signing can launch arbitrary programs; this endpoint is local-only.
+    command=['git','--literal-pathspecs','-c','core.hooksPath=/dev/null',
+             '-c','commit.gpgsign=false','-c','core.fsmonitor=false','-C',str(root),*args]
+    env={k:os.environ[k] for k in ('HOME','PATH','USER','LANG','TMPDIR') if k in os.environ}
+    try:
+        return subprocess.run(command,capture_output=True,text=True,timeout=30,env=env)
+    except (OSError,subprocess.TimeoutExpired):
+        raise HTTPException(409,'Local Git operation unavailable')
+
+@app.post('/projects/{project}/commit',dependencies=[Depends(permission('write'))],response_model=CommitResponse)
+def commit_project(project:str,request:CommitRequest):
+    root=project_path(project)
+    if not request.message.strip(): raise HTTPException(422,'Empty commit message')
+    paths=[]
+    with project_io():
+        for name in request.paths:
+            target=project_file(root,name)
+            if not target.is_file(): raise HTTPException(404,'Existing project file required')
+            relative=target.relative_to(root).as_posix()
+            if relative not in paths: paths.append(relative)
+    repository=local_git(root,'rev-parse','--show-toplevel')
+    if repository.returncode or repository.stdout.strip()!=str(root):
+        raise HTTPException(409,'Project must be a Git working tree root')
+    for key in ('user.name','user.email'):
+        identity=local_git(root,'config','--get',key)
+        if identity.returncode or not identity.stdout.strip():
+            raise HTTPException(409,'Configure Git user.name and user.email locally before committing')
+    staged=local_git(root,'diff','--cached','--quiet','--exit-code')
+    if staged.returncode:
+        raise HTTPException(409,'Index must be empty and readable before committing')
+    if local_git(root,'add','--',*paths).returncode:
+        raise HTTPException(409,'Cannot stage requested files')
+    if local_git(root,'commit','--only','-m',request.message,'--',*paths).returncode:
+        raise HTTPException(409,'Local commit failed; review the index before retrying')
+    head=local_git(root,'rev-parse','--verify','HEAD')
+    if head.returncode or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}',head.stdout.strip()):
+        raise HTTPException(409,'Cannot verify local commit')
+    return {'project':project,'commit':head.stdout.strip(),'files':len(paths),'published':False}
+
+GENERATED_CACHES={'__pycache__','.pytest_cache','.mypy_cache','.ruff_cache'}
+
+def cleanup_tree(root,target,empty_only):
+    directories=[target]
+    for directory in directories:
+        for child in directory.iterdir():
+            project_file(root,child.relative_to(root).as_posix())
+            if child.is_dir(): directories.append(child)
+            elif empty_only: raise HTTPException(409,'Empty tree contains a file')
+            elif not child.is_file(): raise HTTPException(422,'Unsupported cleanup target')
+    return directories
+
+@app.post('/projects/{project}/cleanup',dependencies=[Depends(permission('write'))],response_model=CleanupResponse)
+def cleanup_project(project:str,request:CleanupRequest):
+    root=project_path(project)
+    targets=[]
+    paths=[]
+    # Preflight every path, including descendants, before deleting anything.
+    with project_io():
+        for name in request.paths:
+            target=project_file(root,name)
+            if not target.exists(): raise HTTPException(404,'Project file not found')
+            relative=target.relative_to(root).as_posix()
+            if relative in paths: continue
+            directories=[]
+            if target.is_dir():
+                if request.recursive and target.name not in GENERATED_CACHES:
+                    raise HTTPException(422,'Recursive cleanup is limited to generated caches')
+                if request.empty_tree:
+                    directories=cleanup_tree(root,target,empty_only=True)
+                elif request.recursive:
+                    cleanup_tree(root,target,empty_only=False)
+                elif any(target.iterdir()):
+                    raise HTTPException(409,'Directory is not empty')
+            elif not target.is_file():
+                raise HTTPException(422,'Unsupported cleanup target')
+            elif request.empty_tree:
+                raise HTTPException(409,'Empty tree requires a directory')
+            targets.append((target,directories))
+            paths.append(relative)
+        if not request.dry_run:
+            # Descendants first also handles overlapping requested paths.
+            for target,directories in sorted(targets,key=lambda item:len(item[0].parts),reverse=True):
+                if not target.exists(): continue
+                if directories:
+                    for directory in reversed(directories):
+                        if directory.exists(): directory.rmdir()
+                elif target.is_dir() and request.recursive: shutil.rmtree(target)
+                elif target.is_dir(): target.rmdir()
+                else: target.unlink()
+    return {'project':project,'paths':paths,'dry_run':request.dry_run}
+
+@app.post('/projects/{project}/python-environment',dependencies=[Depends(permission('write'))],response_model=PythonEnvironmentResponse)
+def python_environment(project:str):
+    root=project_path(project)
+    # Share the execution-state lock with task approval while preparing the environment.
+    with transaction() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if c.execute('select count(*) from tasks where state in (?,?,?,?)',ACTIVE).fetchone()[0]:
+            raise HTTPException(409,'Wait for active tasks to finish before preparing Python')
+        with project_io():
+            environment=project_file(root,'.venv')
+            project_file(root,'.venv/bin')
+            project_file(root,'.venv/pyvenv.cfg')
+            python=environment/'bin/python'
+            if environment.exists() and not environment.is_dir():
+                raise HTTPException(409,'Python environment path is not a directory')
+            if not (python.is_file() and (environment/'pyvenv.cfg').is_file()):
+                # venv uses the interpreter's bundled ensurepip wheels, with no downloads.
+                env={k:os.environ[k] for k in ('PATH','LANG','TMPDIR') if k in os.environ}
+                env.update(PIP_NO_INDEX='1',PIP_DISABLE_PIP_VERSION_CHECK='1')
+                try:
+                    prepared=subprocess.run([sys.executable,'-m','venv',str(environment)],
+                                            cwd=root,capture_output=True,text=True,timeout=60,env=env)
+                except (OSError,subprocess.TimeoutExpired):
+                    raise HTTPException(409,'Offline Python environment preparation failed')
+                if prepared.returncode or not (python.is_file() and (environment/'pyvenv.cfg').is_file()):
+                    raise HTTPException(409,'Offline Python environment preparation failed')
+    return {'project':project,'python':str(python),'offline':True,'tests_executed':False}
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()

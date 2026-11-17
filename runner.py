@@ -17,11 +17,12 @@ def command(project,profile="sol_low"):
     if config["agent"]=="antigravity": return model_policy.antigravity_command(project,profile)
     codex=__import__('shutil').which('codex')
     if not codex: raise RuntimeError('codex_not_installed')
+    env_rules=', '.join('"'+pattern+'"="deny"' for pattern in model_policy.ENV_DENY_GLOBS)
     return [codex,'exec','--model',config['model'],'-c','model_reasoning_effort="'+config['effort']+'"','--ignore-user-config','--ignore-rules','--ephemeral',
             '--skip-git-repo-check','--cd',str(project),
             '-c','default_permissions="bridge"',
             '-c','permissions.bridge.extends=":workspace"',
-            '-c','permissions.bridge.filesystem={ ":root"="deny", ":minimal"="read", ":tmpdir"="deny", ":slash_tmp"="deny", ":workspace_roots"={"."="write", ".git"="read", ".codex"="read", ".agents"="read", ".aws"="deny", ".env"="deny", "**/.env*"="deny", "**/*.pem"="deny"} }',
+            '-c','permissions.bridge.filesystem={ ":root"="deny", ":minimal"="read", ":tmpdir"="deny", ":slash_tmp"="deny", ":workspace_roots"={"."="write", ".git"="read", ".codex"="read", ".agents"="read", ".aws"="deny", ".env"="deny", '+env_rules+', "**/*.pem"="deny"} }',
             '-c','permissions.bridge.network.enabled=false',
             '-c','approval_policy="never"',
             '-c','shell_environment_policy.inherit="none"',

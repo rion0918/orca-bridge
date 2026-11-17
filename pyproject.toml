@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 license = {text = "MIT"}
 name = "orca-bridge"
-version = "0.5.0"
+version = "0.5.3"
 requires-python = ">=3.10"
 dynamic = ["dependencies"]
 description = "Authenticated local bridge to Orca on macOS"

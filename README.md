@@ -22,7 +22,7 @@ python3 -m venv .venv
 
 初期状態では.env、実行DB、ログ、接続状態、トンネルバイナリは含まれません。sandbox/は.gitkeepのみの作業場所です。初回起動時に.envとstate/が必要に応じて作成されます。connector/connection.example.jsonとconnector/openapi.jsonは予約ドメインを使った配布例です。
 
-pyproject.tomlはorca-bridge 0.5.0を定義し、requirements.lockを依存定義として参照します。通常は上記の依存導入後、このディレクトリからスクリプトを実行してください。wheelへのconnector/・sandbox/の同梱と実行配置は未対応です。
+pyproject.tomlはorca-bridge 0.5.3を定義し、requirements.lockを依存定義として参照します。通常は上記の依存導入後、このディレクトリからスクリプトを実行してください。wheelへのconnector/・sandbox/の同梱と実行配置は未対応です。
 
 ## 設定
 
@@ -110,15 +110,31 @@ HTTPS経路の未認証401と認証済み応答を検査し、新経路の確認
 | GET | /policy | 自動実行・同時実行の方針 |
 | GET | /projects | 一覧と状態。絶対パスを含む |
 | POST | /projects | 名前を指定しHOME/MuseProjects配下に新規作成 |
+| POST | /projects/{project}/environment-example | ENVIRONMENT.exampleを.env.exampleへ改名（本文なし） |
+| GET | /projects/{project}/environment-example | テンプレート全文取得。Bridgeトークン値は伏字 |
+| PUT | /projects/{project}/environment-example | contentでテンプレート全文置換。応答は伏字 |
+| POST | /projects/{project}/commit | pathsとmessageで指定ファイルのみローカルコミット。pushなし |
+| POST | /projects/{project}/cleanup | 指定パスの安全な削除・dry_run |
+| POST | /projects/{project}/python-environment | オフラインで.venvを準備（本文なし、テスト実行なし） |
 | POST | /tasks | タスク受付。Idempotency-Key対応 |
 | GET | /tasks/{id} | 状態取得 |
 | GET | /tasks/{id}/result | 結果取得 |
 | GET | /tasks/{id}/logs | ログ末尾取得 |
 | POST | /tasks/{id}/cancel | 取消要求 |
 | POST | /tasks/{id}/retry | 確定した失敗等の再試行 |
-| GET | /openapi.json | 認証付き動的仕様。同梱仕様の12操作からは除外 |
+| GET | /openapi.json | 認証付き動的仕様。同梱仕様の18操作からは除外 |
 
 タスクはprompt、project（既定sandbox）、timeout_seconds（10〜900、既定300）、operation（既定development）、execution_profile、execution_reasonを受け付けます。未知フィールドは禁止です。deployment/spendingは409で拒否します。プロンプトは最大8000文字、空白のみは拒否。HTTP本文上限32768バイト、待ち行列上限100件、実行同時数は1です。
+
+追加のプロジェクト操作も既存のプロジェクトIDとパス解決を使います。任意のプロジェクトパスは指定できません。ファイル操作のpathsはプロジェクト相対パスで、範囲外、シンボリックリンク、.git・.aws・.codex、.env系、PEMは422で拒否します。.env.exampleのみテンプレート専用操作で扱い、.envは扱いません。欠落ファイルは404、状態やファイル操作の競合は409です。
+
+environment-exampleのPOSTはENVIRONMENT.exampleが必要で、既存の.env.exampleは上書きしません。GETとPUTはUTF-8の全文を扱い、改行を維持します。PUTの本文は必須のcontent文字列です（未作成なら作成）。応答ではBRIDGE_TOKENとBRIDGE_READ_TOKENの代入値を常に<redacted>に置換し、保存内容は指定された全文のままです。
+
+commitの本文は必須のpaths（1件以上の文字列）とmessage（空白のみ不可）です。既存の通常ファイルだけを対象とし、Git作業ツリー直下・user.nameとuser.emailの設定・ステージ済み変更がないことをステージ前に確認します。設定参照失敗も409で停止し、本人情報を補いません。パスはGitのリテラル指定で渡し、フックと署名を無効化し、指定ファイルだけをコミットします。応答はproject、commit（ハッシュ）、files（重複除去後の指定件数）、published: falseです。失敗後のインデックスは自動復旧せず、ローカル確認が必要です。
+
+cleanupは必須のpathsと任意のrecursive・dry_run・empty_treeを受け付け、真偽値の既定はすべてfalseです。全対象を削除前に検査し、dry_runでも同じ安全検査を行います。recursive=trueでディレクトリを削除できるのは__pycache__、.pytest_cache、.mypy_cache、.ruff_cacheのみで、それ以外は422です。非再帰の非空ディレクトリは409です。empty_tree=trueはファイルを含まない空ディレクトリのツリーだけを対象にし、ファイルがあれば409で削除しません。通常の空ツリーはrecursiveを指定せずempty_treeだけで削除できます。応答はproject、paths、dry_runです。
+
+python-environmentは全プロジェクトの実行中・状態不明タスクがあれば409で待機を促します。準備中は既存の実行状態トランザクションを保持し、タスク承認との競合を防ぎます。.venv/bin/pythonとpyvenv.cfgがあれば再利用し、なければBridgeと同じ解釈系の標準venvで作成します。解釈系同梱のensurepip資材のみを使い、PIP_NO_INDEX=1を指定します。プロジェクト依存のダウンロード・追加インストールは行いません。応答はproject、python（.venv/bin/pythonの絶対パス）、offline: true、tests_executed: falseです。
 
 ## プロジェクト種別とモデル
 
@@ -174,11 +190,19 @@ state/にはDB・監査・実行ログを保存します。DB・ログファイ�
 .venv/bin/python -B -m pytest -p no:cacheprovider tests
 ~~~
 
-元の55ケースに回帰ケースを追加しています。通常テストはモックとフィクスチャを使います。test_sandbox.pyは実際のCodex/macOS隔離を使い、モデル要求はしませんがループバック通信を試みます。ネットワーク操作禁止の環境では実行せず、制約を報告してください。
+元の55ケースに回帰ケースと6操作の契約テストを追加しています。通常テストはモックとフィクスチャを使います。test_sandbox.pyは実際のCodex/macOS隔離を使い、モデル要求はしませんがループバック通信を試みます。ネットワーク操作禁止の環境では実行せず、制約を報告してください。
 
 ~~~sh
 .venv/bin/python -B -m pytest -p no:cacheprovider tests --ignore=tests/test_sandbox.py
 ~~~
+
+依存なしの追加操作確認は次で実行できます。実装関数をASTから抽出して検証し、Git・venv・テンプレートIO・削除システムコールはモックします。HTTP・Pydantic・実削除の検証はpytest側に残ります。
+
+~~~sh
+python3 -B tests/check_project_operations.py
+~~~
+
+今回の同梱OpenAPIは宣言を基に18操作へ静的更新しました。.venv/bin/pythonの起動が実行環境で拒否され、アプリimportによる再生成・完全一致確認は未完了です。
 
 部分検証はスイート合格や実機隔離確認と同一ではありません。今回の検証結果・不足項目はVALIDATION.mdを参照してください。
 
