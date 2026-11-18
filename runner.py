@@ -31,6 +31,27 @@ def command(project,profile="sol_low"):
             '-c','project_doc_max_bytes=0',
             '--json','-']
 
+def task_prompt(task):
+    context=[]
+    if task['continues_task']:
+        with bridge.transaction() as db:
+            context=bridge.continuation_context(db,task['continues_task'],task['project'])
+    brief=json.dumps({'consultation_history':context,'instruction':task['prompt']},ensure_ascii=False)
+    return (
+        'Work only in this project. No deployment, publishing, purchases, outbound messages, '
+        'network operations, secrets, other repositories, plugins or .codex configuration. '
+        'Implement and test local changes. Pause at a material unresolved product or technical decision. '
+        'Use consultation history as context and the latest instruction as the answer. '
+        'If an external action is needed, stop before performing it. '
+        'Your final message must be one JSON object without Markdown. '
+        'Include outcome (completed, needs_decision, needs_approval or blocked) and summary. '
+        'For needs_decision, explain the question, options and recommendation in summary. '
+        'For needs_approval also include operation (github_create, github_publish, deployment or spending). '
+        'Describe scope and, for spending, the quoted amount, currency and billing interval if known. '
+        'These are proposals, never authorizations. Use summary for evidence on completion.\n\n'
+        +brief
+    )
+
 def run(id):
     if str(uuid.UUID(id))!=id: raise ValueError('Invalid task ID')
     t=bridge.task(id)
@@ -43,11 +64,9 @@ def run(id):
     bridge.audit('runner_started',id)
     # Do not pass Bridge tokens, cloud keys, remote Orca routing or parent agent context.
     env={k:os.environ[k] for k in ('HOME','PATH','USER','LANG','TMPDIR') if k in os.environ}
-    prompt=('Work only in this project. No deployment, publishing, purchases, outbound messages, '
-            'network operations, secrets, other repositories, plugins or .codex configuration. '
-            'Implement and test the requested local change. Report evidence and failures.\n\n'+t['prompt'])
     lines=collections.deque(maxlen=300)
     final=[]
+    last_message=None
     def persist_logs():
         fd=os.open(bridge.DATA/(id+'.jsonl'),os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
         with os.fdopen(fd,'w') as f: f.writelines(list(lines))
@@ -57,6 +76,7 @@ def run(id):
     signal.signal(signal.SIGINT,lambda *_:requested.set())
     proc=None
     try:
+        prompt=task_prompt(t)
         selected=json.loads(t['execution'] or '{}')
         profile=selected.get('profile','sol_low')
         proc=subprocess.Popen(command(project,profile),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
@@ -64,6 +84,7 @@ def run(id):
         proc.stdin.write(prompt)
         proc.stdin.close()
         def read():
+            nonlocal last_message
             for line in iter(proc.stdout.readline,''):
                 safe=bridge.redact(line[:16384])
                 lines.append(safe)
@@ -72,7 +93,9 @@ def run(id):
                     if event.get('type')=='turn.completed' and event.get('usage'):
                         selected['usage']=event['usage']
                     item=event.get('item',{})
-                    if item.get('type')=='agent_message': final.append(bridge.redact(item.get('text',''))[:32768])
+                    if item.get('type')=='agent_message':
+                        last_message=item.get('text','')[:32768]
+                        final.append(bridge.redact(last_message))
                     if event.get('type') in ('turn.failed','error'): failed.append(True)
                 except ValueError: pass
         thread=threading.Thread(target=read,daemon=True)
@@ -96,7 +119,8 @@ def run(id):
         try: os.killpg(proc.pid,signal.SIGKILL)
         except ProcessLookupError: pass
         state=state or ('succeeded' if proc.returncode==0 and not failed else 'failed')
-        bridge.update(id,state=state,exit_code=proc.returncode,execution=json.dumps(selected),result='\n'.join(final)[-32768:],error=None if state=='succeeded' else state)
+        handoff=bridge.parse_handoff(last_message) if state=='succeeded' and last_message else None
+        bridge.update(id,state=state,exit_code=proc.returncode,execution=json.dumps(selected),result='\n'.join(final)[-32768:],handoff=handoff,error=None if state=='succeeded' else state)
     except Exception as e:
         if proc and proc.poll() is None:
             try:

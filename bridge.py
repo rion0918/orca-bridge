@@ -17,7 +17,7 @@ import uuid
 import threading
 from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from starlette.responses import JSONResponse
 
 ROOT=Path(__file__).resolve().parent
@@ -43,7 +43,7 @@ async def lifespan(app):
     done.set()
     if thread: thread.join(timeout=25)
 
-app=FastAPI(title='Muse Orca Bridge',version='0.5.3',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
+app=FastAPI(title='Muse Orca Bridge',version='0.6.0',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
 
 class BodyLimit:
     def __init__(self,app): self.app=app
@@ -95,9 +95,19 @@ def connection():
         id text primary key, project text, prompt text, state text, created real,
         updated real, terminal text, error text, result text, exit_code integer,
         idem text unique, fingerprint text, timeout integer, execution text not null default '{}')''')
-    if 'execution' not in [r[1] for r in c.execute('pragma table_info(tasks)')]:
-        c.execute("alter table tasks add column execution text not null default '{}'")
-        c.commit()
+    migrations = {
+        'execution': "text not null default '{}'",
+        'continues_task': 'text',
+        'handoff': 'text',
+    }
+    if migrations.keys() - {r[1] for r in c.execute('pragma table_info(tasks)')}:
+        with c:
+            c.execute('BEGIN IMMEDIATE')
+            columns = {r[1] for r in c.execute('pragma table_info(tasks)')}
+            for name, declaration in migrations.items():
+                if name not in columns:
+                    c.execute(f'alter table tasks add column {name} {declaration}')
+            c.execute('create unique index if not exists task_continuation on tasks(continues_task)')
     os.chmod(DATA/'bridge.sqlite3',0o600)
     return c
 
@@ -166,6 +176,43 @@ class Task(BaseModel):
     operation:Literal['development','deployment','spending']='development'
     execution_profile:Literal['sol_low','sol_high','sol_max','hydrogen_high','argon_high']='sol_low'
     execution_reason:str=Field(default='',max_length=500)
+    continues_task:str|None=Field(default=None, max_length=36)
+
+class TaskHandoff(BaseModel):
+    model_config=ConfigDict(extra='forbid', str_strip_whitespace=True)
+    outcome:Literal['completed','needs_decision','needs_approval','blocked']
+    summary:str=Field(min_length=1,max_length=3000)
+    operation:Literal['github_create','github_publish','deployment','spending']|None=None
+
+    @model_validator(mode='after')
+    def critical_operation_required(self):
+        if (self.outcome == 'needs_approval') != (self.operation is not None):
+            raise ValueError('Operation is required only for approval requests')
+        return self
+
+def parse_handoff(message):
+    try:
+        handoff=TaskHandoff.model_validate_json(message)
+    except ValidationError:
+        return None
+    handoff.summary=redact(handoff.summary)
+    return handoff.model_dump_json(exclude_none=True)
+
+def continuation_context(c, parent, project):
+    """Return the brief and prior decisions from one bounded project chain."""
+    chain=[]
+    while parent:
+        if len(chain) >= 8:
+            raise HTTPException(409,'Consultation limit reached; review before opening a new task')
+        row=c.execute('select * from tasks where id=?',(parent,)).fetchone()
+        if not row or row['project']!=project or row['state']!='succeeded':
+            raise HTTPException(409,'Continuation requires a settled consultation in the same project')
+        handoff=json.loads(row['handoff'] or '{}')
+        if handoff.get('outcome')!='needs_decision':
+            raise HTTPException(409,'Only a specification consultation can be continued')
+        chain.append({'instruction':row['prompt'],'question':handoff['summary']})
+        parent=row['continues_task']
+    return list(reversed(chain))
 
 @app.get('/status',dependencies=[Depends(permission('read'))])
 def status():
@@ -230,7 +277,9 @@ def create(t:Task,idempotency_key:str|None=Header(default=None,max_length=128)):
     project_path(t.project)
     if t.operation!='development':
         raise HTTPException(409,{'code':'human_approval_required','operation':t.operation,'message':'Prepare a proposal for the user. Deployment and spending are not supported by the isolated development runner; a separately reviewed execution path is required.'})
-    fingerprint=hashlib.sha256(t.model_dump_json().encode()).hexdigest()
+    # Preserve idempotency fingerprints already stored by older installations.
+    exclude={'continues_task'} if t.continues_task is None else set()
+    fingerprint=hashlib.sha256(t.model_dump_json(exclude=exclude).encode()).hexdigest()
     if idempotency_key:
         with transaction() as c:
             existing=c.execute('select * from tasks where idem=?',(idempotency_key,)).fetchone()
@@ -239,7 +288,6 @@ def create(t:Task,idempotency_key:str|None=Header(default=None,max_length=128)):
             return public(dict(existing))
     execution=checked_execution(t.execution_profile,t.execution_reason)
     if not t.prompt.strip(): raise HTTPException(422,'Empty prompt')
-    fingerprint=hashlib.sha256(t.model_dump_json().encode()).hexdigest()
     id=str(uuid.uuid4())
     with transaction() as c:
         c.execute('BEGIN IMMEDIATE')
@@ -250,14 +298,21 @@ def create(t:Task,idempotency_key:str|None=Header(default=None,max_length=128)):
                 return public(dict(row))
         if c.execute('select count(*) from tasks where state in ("pending_approval","queued")').fetchone()[0]>=100:
             raise HTTPException(429,'Approval queue full')
+        if t.continues_task is not None:
+            if not t.continues_task:
+                raise HTTPException(422,'Empty continuation ID')
+            continuation_context(c,t.continues_task,t.project)
+            if c.execute('select 1 from tasks where continues_task=?',(t.continues_task,)).fetchone():
+                raise HTTPException(409,'This consultation already has a continuation')
         now=time.time()
-        c.execute('insert into tasks(id,project,prompt,state,created,updated,idem,fingerprint,timeout,execution) values(?,?,?,?,?,?,?,?,?,?)',
-                  (id,t.project,t.prompt,'queued' if autorun() else 'pending_approval',now,now,idempotency_key,fingerprint,t.timeout_seconds,json.dumps(execution)))
+        c.execute('insert into tasks(id,project,prompt,state,created,updated,idem,fingerprint,timeout,execution,continues_task) values(?,?,?,?,?,?,?,?,?,?,?)',
+                  (id,t.project,t.prompt,'queued' if autorun() else 'pending_approval',now,now,idempotency_key,fingerprint,t.timeout_seconds,json.dumps(execution),t.continues_task))
     audit('submitted',id)
     return public(task(id))
 
 def public(t):
-    return {**{k:t[k] for k in ('id','project','state','created','updated','error','exit_code','timeout')},'execution':json.loads(t.get('execution') or '{}')}
+    return {**{k:t[k] for k in ('id','project','state','created','updated','error','exit_code','timeout')},
+            'execution':json.loads(t.get('execution') or '{}'),'continues_task':t.get('continues_task')}
 
 @app.get('/tasks/{id}',dependencies=[Depends(permission('read'))])
 def get(id:str): return public(task(id))
@@ -265,7 +320,7 @@ def get(id:str): return public(task(id))
 @app.get('/tasks/{id}/result',dependencies=[Depends(permission('read'))])
 def result(id:str):
     t=task(id)
-    return {**public(t),'result':redact(t['result'] or '')}
+    return {**public(t),'result':redact(t['result'] or ''),'handoff':json.loads(t['handoff'] or 'null')}
 
 @app.get('/tasks/{id}/logs',dependencies=[Depends(permission('read'))])
 def logs(id:str):
@@ -291,7 +346,15 @@ def retry(id:str):
     t=task(id)
     if t['state'] not in ('failed','timed_out','cancelled'):
         raise HTTPException(409,'Retry requires a confirmed settled attempt')
-    return create(Task(prompt=t['prompt'],project=t['project'],timeout_seconds=t['timeout'],execution_profile=json.loads(t['execution'] or '{}').get('profile','sol_low')),None)
+    if t['continues_task']:
+        with transaction() as c:
+            context=continuation_context(c,t['continues_task'],t['project'])
+        prompt=json.dumps({'previous_consultation':context,'latest_instruction':t['prompt']},ensure_ascii=False)
+        if len(prompt)>8000:
+            raise HTTPException(409,'Consultation context exceeds retry limit; review and submit a new brief')
+    else:
+        prompt=t['prompt']
+    return create(Task(prompt=prompt,project=t['project'],timeout_seconds=t['timeout'],execution_profile=json.loads(t['execution'] or '{}').get('profile','sol_low')),None)
 
 def approve(id,automatic=False):
     t=task(id)

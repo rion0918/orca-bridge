@@ -79,7 +79,7 @@ class ProjectOperations(unittest.TestCase):
         operations={(m,p) for p,item in spec['paths'].items() for m in item if m in {'get','post','put','delete','patch'}}
         self.assertEqual(len(routes),18)
         self.assertEqual(routes,operations)
-        self.assertEqual(spec['info']['version'],'0.5.3')
+        self.assertEqual(spec['info']['version'],'0.6.0')
         self.assertEqual(spec['security'],[{'BearerAuth':[]}])
     def test_redaction(self):
         text='BRIDGE_TOKEN=write-value\nBRIDGE_READ_TOKEN="read-value"\nOTHER=keep\n export BRIDGE_TOKEN = duplicate\r\n'

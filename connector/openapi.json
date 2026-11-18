@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Muse Orca Bridge",
-    "version": "0.5.3"
+    "version": "0.6.0"
   },
   "paths": {
     "/status": {
@@ -660,6 +660,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentExampleRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -678,16 +688,6 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EnvironmentExampleRequest"
               }
             }
           }
@@ -719,6 +719,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommitRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -737,16 +747,6 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CommitRequest"
               }
             }
           }
@@ -778,6 +778,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CleanupRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -796,16 +806,6 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CleanupRequest"
               }
             }
           }
@@ -939,6 +939,18 @@
             "maxLength": 500,
             "title": "Execution Reason",
             "default": ""
+          },
+          "continues_task": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 36
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continues Task"
           }
         },
         "additionalProperties": false,
@@ -995,22 +1007,22 @@
               "type": "string"
             },
             "type": "array",
-            "title": "Paths",
-            "minItems": 1
+            "minItems": 1,
+            "title": "Paths"
           },
           "message": {
             "type": "string",
-            "title": "Message",
-            "minLength": 1
+            "minLength": 1,
+            "title": "Message"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "paths",
           "message"
         ],
-        "title": "CommitRequest",
-        "additionalProperties": false
+        "title": "CommitRequest"
       },
       "EnvironmentExampleRequest": {
         "properties": {
@@ -1019,12 +1031,12 @@
             "title": "Content"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "content"
         ],
-        "title": "EnvironmentExampleRequest",
-        "additionalProperties": false
+        "title": "EnvironmentExampleRequest"
       },
       "CleanupRequest": {
         "properties": {
@@ -1033,8 +1045,8 @@
               "type": "string"
             },
             "type": "array",
-            "title": "Paths",
-            "minItems": 1
+            "minItems": 1,
+            "title": "Paths"
           },
           "recursive": {
             "type": "boolean",
@@ -1052,12 +1064,12 @@
             "default": false
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "paths"
         ],
-        "title": "CleanupRequest",
-        "additionalProperties": false
+        "title": "CleanupRequest"
       },
       "EnvironmentExampleResponse": {
         "properties": {
