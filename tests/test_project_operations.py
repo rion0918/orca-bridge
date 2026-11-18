@@ -1,11 +1,22 @@
 """Project maintenance contracts: fixtures and mocked local commands, no network."""
 import subprocess
 import contextlib
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import bridge
 from test_bridge import client
+
+
+def test_shipped_openapi_matches_authenticated_schema(client):
+    schema_path = Path(__file__).resolve().parents[1] / 'connector/openapi.json'
+    shipped = json.loads(schema_path.read_text())
+    assert shipped.pop('servers')
+    response = client.get('/openapi.json')
+    assert response.status_code == 200
+    assert shipped == response.json()
 
 
 @pytest.fixture
