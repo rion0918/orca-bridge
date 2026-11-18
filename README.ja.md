@@ -2,9 +2,9 @@
 
 [English](README.md) · [対応OS](#対応os) · [Macで起動](#macでbridgeを起動する) · [Museと接続](#museと接続する)
 
-Orca Bridgeを使うと、自分のマシン上のOrcaとCodexに、Museから実装やテストを頼めます。Museは進捗と結果を確認し、Codexから質問が返ったら回答を送って作業を続けられます。同じHTTP APIを他のクライアントから使うこともできます。
+Orca Bridgeを使うと、自分のマシン上のOrcaに、Museから開発を頼めます。Museは進捗と結果を確認し、開発エージェントから質問が返ったら回答を送って作業を続けられます。同じHTTP APIを他のクライアントから使うこともできます。
 
-`Muse → HTTPS → Orca Bridge → Orca → Codex`
+`Muse → HTTPS → Orca Bridge → Orca → 開発エージェント`
 
 ## 対応OS
 
@@ -19,7 +19,7 @@ Orca Bridgeを使うと、自分のマシン上のOrcaとCodexに、Museから�
 
 ## MacでBridgeを起動する
 
-Git、Python 3.10以上（検証は3.13）、[OrcaとそのCLI](https://orca.dev/docs/install)、ログイン済みのCodex CLIを用意してください。先にOrcaを起動します。
+Git、Python 3.10以上（検証は3.13）、[OrcaとそのCLI](https://orca.dev/docs/install)、[利用する開発エージェント](#開発エージェントを選ぶ)のCLIを用意してください。先にOrcaを起動します。
 
 ```sh
 git clone https://github.com/rion0918/orca-bridge.git
@@ -53,6 +53,7 @@ Bridgeは `127.0.0.1:8765` で待ち受け、初回起動時に非公開の `.en
    Authorization: Bearer で認証してください。トークンはMuseの安全な入力画面で入力します。
    接続後にGET /statusとGET /agentsを呼び、実際の応答を教えてください。
    まだ開発タスクは作成しないでください。
+   次回以降は作業に応じてwork_kindを選び、実行プロファイルはBridgeに任せてください。
    ```
 
 3. **トークンを入力する。** Macで `.venv/bin/python copy_token.py` を実行し、読み書き用トークンをMuseの安全な入力画面に貼ります。チャット本文には貼りません。普段の操作端末が別でも、この入力だけ同じアカウントのMuseをMacで開いて行えます。
@@ -62,11 +63,21 @@ Bridgeは `127.0.0.1:8765` で待ち受け、初回起動時に非公開の `.en
 
 リモート接続を止めるには、Macで `.venv/bin/python process_control.py --tunnel-only` を実行します。
 
+## 開発エージェントを選ぶ
+
+Macの非公開 `.env` に `BRIDGE_AGENTS` を設定して、Bridgeを再起動します。既定は `codex` です。Claudeだけ使うなら `claude`、先にCodexを試すなら `codex,claude` を指定します。Bridgeは設定順に利用可能な候補を選びます。Museなどのクライアントは `work_kind` に `implementation`（実装。既定）、`design`（設計）、`recovery`（難しい修正）のいずれかを渡せます。既存の `execution_profile` 指定も使えます。認証状態は `GET /agents`、選択肢は `GET /models` で確認できます。
+
+| エージェント | 前提と制限 |
+| --- | --- |
+| Codex | ログイン済みCLIと利用できる契約枠が必要です。隔離した環境でテストを実行できます。 |
+| Claude Code（試験対応） | CLI 2.1.319以上とClaudeのサブスクリプションでのログインが必要です。有効にする前にClaude側で追加使用を無効にしてください。残量をBridgeで確認できないため、実行ごとにMacで承認します。プロジェクト内のファイル操作に対応し、シェルコマンドやテストは実行しません。[Claude CLIのオプション](https://code.claude.com/docs/en/cli-reference) |
+| Antigravity | 隔離と取消の検証が完了するまで無効です。 |
+
 ## APIと利用範囲
 
 [OpenAPI仕様](connector/openapi.json)、[接続例](connector/connection.example.json)、[設定テンプレート](.env.example)、[技術リファレンス](docs/reference.ja.md)を参照してください。動いているBridgeの仕様は、認証付きの `GET /openapi.json` でも取得できます。
 
-- 初期設定ではMacでタスクを承認します。`BRIDGE_AUTORUN_SANDBOX=1` は自動実行を有効にし、既定のsandbox以外の対象プロジェクトにも適用されます。
+- 初期設定ではMacでタスクを承認します。`BRIDGE_AUTORUN_SANDBOX=1` は実行可能なCodexタスクの自動実行を有効にし、既定のsandbox以外の対象プロジェクトにも適用されます。
 - 読み書き用トークンは設定済みの全対象プロジェクトを操作できます。機密情報のないテスト用プロジェクトから始めてください。依頼とログはホストに残り、自動削除されません。
 - このOSS版では、GitHub公開、本番デプロイ、課金は実行しません。
 

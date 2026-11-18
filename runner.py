@@ -15,6 +15,7 @@ def command(project,profile="sol_low"):
     import model_policy
     config=model_policy.PROFILES[profile]
     if config["agent"]=="antigravity": return model_policy.antigravity_command(project,profile)
+    if config["agent"]=="claude": return model_policy.claude_command(profile)
     codex=__import__('shutil').which('codex')
     if not codex: raise RuntimeError('codex_not_installed')
     env_rules=', '.join('"'+pattern+'"="deny"' for pattern in model_policy.ENV_DENY_GLOBS)
@@ -37,10 +38,13 @@ def task_prompt(task):
         with bridge.transaction() as db:
             context=bridge.continuation_context(db,task['continues_task'],task['project'])
     brief=json.dumps({'consultation_history':context,'instruction':task['prompt']},ensure_ascii=False)
+    selected=json.loads(task['execution'] or '{}')
+    work=('Work with the available project file tools. Report which tests could not be run. '
+          if selected.get('agent')=='claude' else 'Implement and test local changes. ')
     return (
         'Work only in this project. No deployment, publishing, purchases, outbound messages, '
         'network operations, secrets, other repositories, plugins or .codex configuration. '
-        'Implement and test local changes. Pause at a material unresolved product or technical decision. '
+        +work+'Pause at a material unresolved product or technical decision. '
         'Use consultation history as context and the latest instruction as the answer. '
         'If an external action is needed, stop before performing it. '
         'Your final message must be one JSON object without Markdown. '
@@ -78,6 +82,7 @@ def run(id):
     try:
         prompt=task_prompt(t)
         selected=json.loads(t['execution'] or '{}')
+        is_claude=selected.get('agent')=='claude'
         profile=selected.get('profile','sol_low')
         proc=subprocess.Popen(command(project,profile),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                               text=True,env=env,cwd=project,start_new_session=True)
@@ -90,6 +95,15 @@ def run(id):
                 lines.append(safe)
                 try:
                     event=json.loads(line)
+                    if not isinstance(event,dict): continue
+                    if is_claude:
+                        if event.get('type')=='result':
+                            if event.get('is_error') or not isinstance(event.get('result'),str):
+                                failed.append(True)
+                            else:
+                                last_message=event['result'][:32768]
+                                final.append(bridge.redact(last_message))
+                        continue
                     if event.get('type')=='turn.completed' and event.get('usage'):
                         selected['usage']=event['usage']
                     item=event.get('item',{})
@@ -118,7 +132,7 @@ def run(id):
         # Kill any same-session helpers retained after the agent exits.
         try: os.killpg(proc.pid,signal.SIGKILL)
         except ProcessLookupError: pass
-        state=state or ('succeeded' if proc.returncode==0 and not failed else 'failed')
+        state=state or ('succeeded' if proc.returncode==0 and not failed and (not is_claude or last_message is not None) else 'failed')
         handoff=bridge.parse_handoff(last_message) if state=='succeeded' and last_message else None
         bridge.update(id,state=state,exit_code=proc.returncode,execution=json.dumps(selected),result='\n'.join(final)[-32768:],handoff=handoff,error=None if state=='succeeded' else state)
     except Exception as e:

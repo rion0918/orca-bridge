@@ -925,14 +925,18 @@
           "execution_profile": {
             "type": "string",
             "enum": [
+              "auto",
               "sol_low",
               "sol_high",
               "sol_max",
               "hydrogen_high",
-              "argon_high"
+              "argon_high",
+              "claude_implementation",
+              "claude_design",
+              "claude_recovery"
             ],
             "title": "Execution Profile",
-            "default": "sol_low"
+            "default": "auto"
           },
           "execution_reason": {
             "type": "string",
@@ -951,6 +955,16 @@
               }
             ],
             "title": "Continues Task"
+          },
+          "work_kind": {
+            "type": "string",
+            "enum": [
+              "implementation",
+              "design",
+              "recovery"
+            ],
+            "title": "Work Kind",
+            "default": "implementation"
           }
         },
         "additionalProperties": false,
