@@ -13,10 +13,13 @@ def initialize():
             id text primary key,name text,source text,kind text,repo_id text,
             workspace text,state text)''')
 
+def overlaps_bridge(path):
+    return path.is_relative_to(bridge.ROOT) or bridge.ROOT.is_relative_to(path)
+
 def safe(path):
     p=Path(path).absolute()
     return (p.is_dir() and p.resolve()==p and p!=Path.home() and
-            p not in bridge.ROOT.parents and p!=bridge.ROOT and
+            not overlaps_bridge(p) and
             not any(part.startswith('.') for part in p.parts))
 
 def record(id):
@@ -26,7 +29,9 @@ def record(id):
     return dict(r)
 
 def public(r):
-    return {'id':r['id'],'name':r['name'],'kind':r['kind'],'state':r['state'],
+    path=Path(r['workspace'] or r['source'])
+    state='blocked' if overlaps_bridge(path) else r['state']
+    return {'id':r['id'],'name':r['name'],'kind':r['kind'],'state':state,
             'execution':'dedicated Orca worktree' if r['kind']=='git' else 'project folder',
             'has_workspace':bool(r['workspace']),'source_path':r['source'],'workspace_path':r['workspace']}
 
@@ -36,8 +41,10 @@ def refresh():
     ids=[]
     with bridge.transaction() as c:
         for repo in repos:
-            id='orca-'+repo['id']; ids.append(id)
             source=repo['path']
+            if repo.get('hiddenAt') and not Path(source).is_dir():
+                continue
+            id='orca-'+repo['id']; ids.append(id)
             state='available' if safe(source) else 'blocked'
             # The existing sandbox has its original stable alias.
             if Path(source)==bridge.ROOT/'sandbox': continue

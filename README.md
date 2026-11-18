@@ -86,7 +86,9 @@ See the [OpenAPI schema](connector/openapi.json), [connection example](connector
 
 - Tasks require local approval by default. `BRIDGE_AUTORUN_SANDBOX=1` enables automatic execution for eligible Codex tasks across eligible projects, including projects outside the default sandbox.
 - The read/write token can operate across configured projects. Start with a test project that contains no sensitive data. Task data and logs stay on the host and have no automatic expiry.
-- GitHub publication, production deployment, and billing execution are outside this public build's scope.
+- GitHub publication creates a new repository from a reviewed Git snapshot. It requires a one-time approval with a credential separate from the connector token. The host must have an authenticated GitHub CLI.
+- Static preview is opt-in per project. Run `.venv/bin/python preview.py` with the preview environment settings to serve snapshots from a separate origin. Access from another device requires an approved route to the preview origin.
+- Production deployment and billing operations require a separate execution path.
 
 ## Contributing and license
 

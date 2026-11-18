@@ -11,6 +11,30 @@ import time
 import uuid
 import bridge
 
+def filesystem_policy(project):
+    # Host interpreter and its native dependencies are read-only runtime assets.
+    runtime=Path(sys.base_prefix).resolve()
+    policy={":root":"deny",":minimal":"read",":tmpdir":"deny",":slash_tmp":"deny",
+            ":workspace_roots":{".":"write",".git":"read",".codex":"read",".agents":"read",".aws":"deny",".env":"deny","**/*.pem":"deny"}}
+    from model_policy import ENV_DENY_GLOBS
+    policy[":workspace_roots"].update(dict.fromkeys(ENV_DENY_GLOBS,'deny'))
+    policy[str(runtime)]="read"
+    if runtime.is_relative_to(Path("/opt/homebrew")): policy["/opt/homebrew/opt"]="read"
+    native=list((runtime/'lib'/('python'+str(sys.version_info.major)+'.'+str(sys.version_info.minor))/'lib-dynload').glob('*.so'))
+    if sys.platform=='darwin' and native:
+        result=subprocess.run(['/usr/bin/otool','-L',*[str(p) for p in native]],capture_output=True,text=True,timeout=10)
+        if result.returncode: raise RuntimeError('Unable to inspect trusted Python runtime')
+        for line in result.stdout.splitlines():
+            if line.startswith('\t/opt/homebrew/'):
+                library=Path(line.strip().split(' (')[0])
+                if library.is_file():
+                    policy[str(library.parent.parent)]='read'
+                    policy[str(library.resolve().parent.parent)]='read'
+    def toml(value):
+        if isinstance(value,dict):return '{'+','.join(json.dumps(k)+'='+toml(v) for k,v in value.items())+'}'
+        return json.dumps(value)
+    return 'permissions.bridge.filesystem='+toml(policy)
+
 def command(project,profile="sol_low"):
     import model_policy
     config=model_policy.PROFILES[profile]
@@ -18,16 +42,18 @@ def command(project,profile="sol_low"):
     if config["agent"]=="claude": return model_policy.claude_command(profile)
     codex=__import__('shutil').which('codex')
     if not codex: raise RuntimeError('codex_not_installed')
-    env_rules=', '.join('"'+pattern+'"="deny"' for pattern in model_policy.ENV_DENY_GLOBS)
     return [codex,'exec','--model',config['model'],'-c','model_reasoning_effort="'+config['effort']+'"','--ignore-user-config','--ignore-rules','--ephemeral',
             '--skip-git-repo-check','--cd',str(project),
             '-c','default_permissions="bridge"',
             '-c','permissions.bridge.extends=":workspace"',
-            '-c','permissions.bridge.filesystem={ ":root"="deny", ":minimal"="read", ":tmpdir"="deny", ":slash_tmp"="deny", ":workspace_roots"={"."="write", ".git"="read", ".codex"="read", ".agents"="read", ".aws"="deny", ".env"="deny", '+env_rules+', "**/*.pem"="deny"} }',
+            '-c',filesystem_policy(project),
             '-c','permissions.bridge.network.enabled=false',
             '-c','approval_policy="never"',
             '-c','shell_environment_policy.inherit="none"',
-            '-c','shell_environment_policy.set.PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"',
+            '-c','shell_environment_policy.set.TMPDIR='+json.dumps(str(project)),
+            '-c','shell_environment_policy.set.PATH='+json.dumps(str(project/'.venv/bin')+':/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'),
+            '-c','shell_environment_policy.set.GIT_CONFIG_GLOBAL="/dev/null"',
+            '-c','shell_environment_policy.set.GIT_CONFIG_NOSYSTEM="1"',
             '-c','features.apps=false','-c','web_search="disabled"',
             '-c','project_doc_max_bytes=0',
             '--json','-']

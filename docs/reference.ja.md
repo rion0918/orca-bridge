@@ -127,7 +127,12 @@ HTTPS経路の未認証401と認証済み応答を検査し、新経路の確認
 | GET | /tasks/{id}/logs | ログ末尾取得 |
 | POST | /tasks/{id}/cancel | 取消要求 |
 | POST | /tasks/{id}/retry | 確定した失敗等の再試行 |
-| GET | /openapi.json | 認証付き動的仕様。同梱仕様の18操作からは除外 |
+| POST | /projects/{project}/preview | 許可済みプロジェクトの静的スナップショットを作成 |
+| DELETE | /previews/{preview_id} | プレビューを終了 |
+| POST | /publication-requests | GitHub公開の確認用スナップショットを作成 |
+| GET | /publication-requests/{id} | 公開依頼の状態を取得 |
+| POST | /publication-requests/{id}/execute | 人間が承認済みの公開依頼を1回実行 |
+| GET | /openapi.json | 認証付きの動的仕様 |
 
 タスクはprompt、project（既定sandbox）、timeout_seconds（10〜900、既定300）、operation（既定development）、execution_profile、execution_reason、work_kindを受け付けます。未知フィールドは禁止です。deployment/spendingは409で拒否します。プロンプトは最大8000文字、空白のみは拒否。HTTP本文上限32768バイト、待ち行列上限100件、実行同時数は1です。
 
@@ -135,11 +140,11 @@ HTTPS経路の未認証401と認証済み応答を検査し、新経路の確認
 
 environment-exampleのPOSTはENVIRONMENT.exampleが必要で、既存の.env.exampleは上書きしません。GETとPUTはUTF-8の全文を扱い、改行を維持します。PUTの本文は必須のcontent文字列です（未作成なら作成）。応答ではBRIDGE_TOKENとBRIDGE_READ_TOKENの代入値を常に<redacted>に置換し、保存内容は指定された全文のままです。
 
-commitの本文は必須のpaths（1件以上の文字列）とmessage（空白のみ不可）です。既存の通常ファイルだけを対象とし、Git作業ツリー直下・user.nameとuser.emailの設定・ステージ済み変更がないことをステージ前に確認します。設定参照失敗も409で停止し、本人情報を補いません。パスはGitのリテラル指定で渡し、フックと署名を無効化し、指定ファイルだけをコミットします。応答はproject、commit（ハッシュ）、files（重複除去後の指定件数）、published: falseです。失敗後のインデックスは自動復旧せず、ローカル確認が必要です。
+commitの本文は必須のpaths（1件以上の文字列）とmessage（空白のみ不可）です。既存の通常ファイルだけを対象とし、Git作業ツリー直下・user.nameとuser.emailの設定・ステージ済み変更がないことをステージ前に確認します。設定参照失敗も409で停止し、本人情報を補いません。パスはGitのリテラル指定で渡し、フックと署名を無効化し、指定ファイルだけをコミットします。応答はproject、commit（ハッシュ）、files（重複除去後の指定件数）、paths（指定ファイル）、published: falseです。失敗後のインデックスは自動復旧せず、ローカル確認が必要です。
 
-cleanupは必須のpathsと任意のrecursive・dry_run・empty_treeを受け付け、真偽値の既定はすべてfalseです。全対象を削除前に検査し、dry_runでも同じ安全検査を行います。recursive=trueでディレクトリを削除できるのは__pycache__、.pytest_cache、.mypy_cache、.ruff_cacheのみで、それ以外は422です。非再帰の非空ディレクトリは409です。empty_tree=trueはファイルを含まない空ディレクトリのツリーだけを対象にし、ファイルがあれば409で削除しません。通常の空ツリーはrecursiveを指定せずempty_treeだけで削除できます。応答はproject、paths、dry_runです。
+cleanupは必須のpathsと任意のrecursive・dry_run・empty_treeを受け付け、dry_runの既定はtrueで、recursiveとempty_treeの既定はfalseです。削除はディレクトリに限り、dry_run=falseを明示した場合に実行します。全対象を削除前に検査し、dry_runでも同じ安全検査を行います。recursive=trueでディレクトリを削除できるのは__pycache__、.pytest_cache、.mypy_cache、.ruff_cache、.verificationのみで、それ以外は422です。非再帰の非空ディレクトリは409です。empty_tree=trueはファイルを含まない空ディレクトリのツリーだけを対象にし、ファイルがあれば409で削除しません。通常の空ツリーはrecursiveを指定せずempty_treeだけで削除できます。応答はproject、paths、dry_runです。
 
-python-environmentは全プロジェクトの実行中・状態不明タスクがあれば409で待機を促します。準備中は既存の実行状態トランザクションを保持し、タスク承認との競合を防ぎます。.venv/bin/pythonとpyvenv.cfgがあれば再利用し、なければBridgeと同じ解釈系の標準venvで作成します。解釈系同梱のensurepip資材のみを使い、PIP_NO_INDEX=1を指定します。プロジェクト依存のダウンロード・追加インストールは行いません。応答はproject、python（.venv/bin/pythonの絶対パス）、offline: true、tests_executed: falseです。
+python-environmentは、実行中や状態不明のタスクがあれば409を返します。uvで新規の.venvを作成し、Bridgeのrequirements.lockに記載された依存関係をローカルキャッシュからオフラインで導入します。既存の.venvがある場合は、ローカル確認を求めて停止します。応答はproject、python（.venv/bin/pythonの絶対パス）、offline: true、tests_executed: falseです。
 
 ## プロジェクト種別とモデル
 
