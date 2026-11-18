@@ -35,7 +35,13 @@ Bridgeは `127.0.0.1:8765` で待ち受け、初回起動時に非公開の `.en
 
 個人用Custom Connectorを使えるMuseアカウントが必要です。設定はアカウントごとに初回だけ行い、同じコネクターをスマホとPCから使えます。
 
-1. **MuseからBridgeにつながるようにする。** ngrokを導入・設定したMacで、Bridgeとは別のターミナルから次を実行します。認証付きAPIがHTTPS経由で利用できるようになります。
+1. **BridgeをHTTPSで公開する。** ngrokを導入・設定し、自分の[ngrok Dev Domain](https://dashboard.ngrok.com/domains)をMacのローカル `.env` に設定します。
+
+   ```dotenv
+   BRIDGE_NGROK_URL=https://your-dev-domain.ngrok-free.dev
+   ```
+
+   リポジトリのフォルダを開いた別のターミナルで、次を実行します。
 
    ```sh
    .venv/bin/python tunnel.py --publish-approved --provider ngrok
@@ -59,7 +65,7 @@ Bridgeは `127.0.0.1:8765` で待ち受け、初回起動時に非公開の `.en
 3. **トークンを入力する。** Macで `.venv/bin/python copy_token.py` を実行し、読み書き用トークンをMuseの安全な入力画面に貼ります。チャット本文には貼りません。普段の操作端末が別でも、この入力だけ同じアカウントのMuseをMacで開いて行えます。
 4. **タスクを試す。** 両方の接続確認が通ったら、「Orca Bridgeで `sandbox` に `hello.txt` を作り、読み直した内容を教えて」と依頼します。初期設定では、返されたIDをMacで `.venv/bin/python bridge.py approve TASK_ID` に渡すと実行され、Museが結果を読めます。
 
-外から使う間はMac、Orca、Bridge、トンネルを起動しておきます。URLが変わったらMuseの接続先とトークンの紐付けを確認してください。Bridgeが401を返す場合はトークン、トンネル事業者のHTMLエラーなら接続経路を確認します。
+外から使う間はMac、Orca、Bridge、トンネルを起動しておきます。再起動してもURLとトークンが同じなら、Museに保存した認証情報を再利用できます。どちらかを変更した場合だけコネクターを更新します。
 
 リモート接続を止めるには、Macで `.venv/bin/python process_control.py --tunnel-only` を実行します。
 

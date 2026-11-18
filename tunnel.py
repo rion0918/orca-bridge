@@ -17,12 +17,19 @@ import os
 
 ROOT=Path(__file__).resolve().parent
 
-def command(provider):
+def fixed_ngrok_url(value):
+    label=r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
+    if not value or not re.fullmatch(rf'https://(?:{label}\.)+[a-z][a-z0-9-]{{0,62}}/?',value,re.ASCII|re.IGNORECASE):
+        raise ValueError('Set BRIDGE_NGROK_URL to your ngrok Dev Domain as an HTTPS URL')
+    return value.rstrip('/').lower()
+
+def command(provider,ngrok_url=None):
     if provider=='ngrok':
+        url=fixed_ngrok_url(ngrok_url)
         local=ROOT/'.tools/ngrok'
         binary=str(local) if local.exists() else shutil.which('ngrok')
         if not binary: raise RuntimeError('ngrok CLI not installed')
-        return [binary,'http','http://127.0.0.1:8765','--inspect=false','--log=stdout','--log-format=json']
+        return [binary,'http','http://127.0.0.1:8765','--url',url,'--inspect=false','--log=stdout','--log-format=json']
     if provider=='cloudflare':
         return [str(ROOT/'.tools/cloudflared'),'tunnel','--url','http://127.0.0.1:8765','--no-autoupdate']
     raise ValueError('Unknown tunnel provider')
@@ -60,7 +67,12 @@ def main():
     p.add_argument('--publish-approved',action='store_true',required=True)
     p.add_argument('--provider',choices=['ngrok','cloudflare'],default='ngrok')
     a=p.parse_args()
-    proc=subprocess.Popen(command(a.provider),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+    ngrok_url=None
+    if a.provider=='ngrok':
+        load()
+        try: ngrok_url=fixed_ngrok_url(os.environ.get('BRIDGE_NGROK_URL'))
+        except ValueError as error: p.error(str(error))
+    proc=subprocess.Popen(command(a.provider,ngrok_url),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     record(a.provider,proc.pid)
     lines=queue.Queue()
     def read():
@@ -85,6 +97,8 @@ def main():
                 if match: url=match.group(0)
             if url: break
         if not url: raise RuntimeError('Tunnel did not start. '+','.join(sorted(codes)))
+        if ngrok_url is not None and url!=ngrok_url:
+            raise RuntimeError('ngrok endpoint does not match BRIDGE_NGROK_URL')
         verify(url,a.provider)
         # Only retire the exact previously recorded route after the new one is verified.
         print(stop('tunnel'),flush=True)

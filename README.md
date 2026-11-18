@@ -35,7 +35,13 @@ The Bridge listens on `127.0.0.1:8765` and generates read/write and read-only to
 
 Use a Muse account with personal Custom Connectors available. The setup is per account. You can use the same connector from your phone or computer.
 
-1. **Expose the authenticated Bridge to Muse.** With a configured ngrok CLI, run the following on the Mac in another terminal. It exposes the API over HTTPS.
+1. **Expose the Bridge over HTTPS.** Install and configure ngrok, then copy your own [ngrok Dev Domain](https://dashboard.ngrok.com/domains) into the Mac's local `.env`:
+
+   ```dotenv
+   BRIDGE_NGROK_URL=https://your-dev-domain.ngrok-free.dev
+   ```
+
+   In another terminal, start the tunnel from the repository directory:
 
    ```sh
    .venv/bin/python tunnel.py --publish-approved --provider ngrok
@@ -60,7 +66,7 @@ Use a Muse account with personal Custom Connectors available. The setup is per a
 3. **Enter the Bridge token.** Run `.venv/bin/python copy_token.py` on the Mac and paste the read/write token into Muse's secure credential input. Keep it out of chat. If you set up Muse on a different device, you can do this step from the Mac while signed in to the same Muse account.
 4. **Try a task.** Once both checks succeed, ask Muse: “Use Orca Bridge to create `hello.txt` in `sandbox`. Read it back and report the contents.” With the default settings, approve the returned ID on the Mac with `.venv/bin/python bridge.py approve TASK_ID`. Muse can then read the result.
 
-Keep the Mac, Orca, Bridge, and tunnel running for remote use. If the URL changes, update the connector and check its credential binding. A Bridge HTTP 401 means the token needs checking. An HTML error from the tunnel provider points to the connection path.
+Keep the Mac, Orca, Bridge, and tunnel running for remote use. Muse can reuse the saved credential after a restart when the URL and token stay the same. If either changes, update the connector once.
 
 To stop remote access, run `.venv/bin/python process_control.py --tunnel-only` on the Mac.
 

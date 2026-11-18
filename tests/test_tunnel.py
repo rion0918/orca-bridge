@@ -2,11 +2,36 @@ import json
 import pytest
 import tunnel
 
-def test_ngrok_command_disables_inspection():
-    cmd=tunnel.command('ngrok')
+def test_ngrok_command_pins_domain_and_disables_inspection(monkeypatch):
+    monkeypatch.setattr(tunnel.shutil,'which',lambda _: '/fixture/ngrok')
+    cmd=tunnel.command('ngrok','https://your-domain.example')
     assert '--inspect=false' in cmd
     assert 'http://127.0.0.1:8765' in cmd
+    assert cmd[cmd.index('--url')+1]=='https://your-domain.example'
     assert not any('authtoken' in arg for arg in cmd)
+
+
+@pytest.mark.parametrize('url',[None,'https://','http://your-domain.example','https://user@your-domain.example',
+                               'https://your-domain.example/path','https://your-domain.example?x=y',
+                               'https://your-domain.example#fragment','https://your-domain.example:80'])
+def test_ngrok_rejects_missing_or_invalid_fixed_url(url):
+    with pytest.raises(ValueError,match='BRIDGE_NGROK_URL'):
+        tunnel.command('ngrok',url)
+
+
+def test_unexpected_tunnel_url_never_receives_bridge_credentials(monkeypatch):
+    from types import SimpleNamespace
+    proc=SimpleNamespace(pid=123,stdout=iter(['{"url":"https://other-domain.example"}\n']),
+                         poll=lambda:0)
+    monkeypatch.setattr(tunnel,'load',lambda:None)
+    monkeypatch.setenv('BRIDGE_NGROK_URL','https://your-domain.example')
+    monkeypatch.setattr(tunnel.shutil,'which',lambda _: '/fixture/ngrok')
+    monkeypatch.setattr(tunnel.subprocess,'Popen',lambda *args,**kwargs:proc)
+    monkeypatch.setattr(tunnel,'record',lambda *args:None)
+    monkeypatch.setattr(tunnel,'verify',lambda *args:pytest.fail('Unexpected endpoint must not be verified'))
+    monkeypatch.setattr('sys.argv',['tunnel.py','--publish-approved','--provider','ngrok'])
+    with pytest.raises(RuntimeError,match='does not match'):
+        tunnel.main()
 
 def test_endpoint_preserves_distribution_files(tmp_path,monkeypatch):
     monkeypatch.setattr(tunnel,'ROOT',tmp_path)

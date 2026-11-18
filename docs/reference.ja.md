@@ -36,6 +36,7 @@ pyproject.tomlはorca-bridge 0.6.0を定義し、requirements.lockを依存定�
 | --- | --- |
 | BRIDGE_TOKEN | 未設定。初回load時に生成する読み書き用トークン。空では認証不可 |
 | BRIDGE_READ_TOKEN | 未設定。初回load時に生成する読み取り専用トークン |
+| BRIDGE_NGROK_URL | ngrok利用時に必須。利用者自身のDev DomainをHTTPS URLで指定 |
 | BRIDGE_AGENTS | 既定はcodex。codex,claudeなど、優先順に指定。Claudeは常にローカル承認 |
 | BRIDGE_AUTORUN_SANDBOX | 未設定（無効）。1で開発を自動実行。名前に反してsandbox以外も対象 |
 | ORCA_CLI_COMMAND | 未設定。Orcaの実行ファイル名またはパス。引数は含めない |
@@ -93,6 +94,7 @@ client.pyは.envから読み書きトークンを読み込みます。
 承認HTTP APIはありません。承認後、OrcaのターミナルがBridgeと同じPython解釈系でrunner.pyを起動します。BRIDGE_AUTORUN_SANDBOX=1でserve.pyを起動するとqueuedから自動実行します。Codex選択時のみ、sandboxに限らず全ての許可プロジェクトが対象です。通常フォルダの直接編集も含むことを理解したうえで設定してください。
 
 トンネルは外部公開を伴う任意操作です。利用者が公開を承認した場合のみ実行します。通常のローカル利用には不要です。
+ngrokの場合は、事前に `.env` の `BRIDGE_NGROK_URL` を自分の固定HTTPS URLに設定します。
 
 ~~~sh
 .venv/bin/python tunnel.py --publish-approved --provider ngrok
