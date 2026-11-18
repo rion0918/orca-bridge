@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orca Bridge 公開承認</title>
+<style>body{font:16px system-ui;margin:24px auto;padding:0 18px;max-width:800px;line-height:1.6}input,button{font:inherit;padding:12px;box-sizing:border-box;max-width:100%}input{width:100%}button{margin:12px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f4f6;padding:16px}label{display:block;margin-top:16px}.danger{color:#9b1626}#confirm{display:none}</style>
+<h1>GitHubへの公開を承認</h1>
+<p>公開先・コミット・履歴を確認してください。承認すると、Museがこの内容だけを公開できます。有効期限は依頼作成から15分です。</p>
+<p class="danger">ユーザー専用キーはこの画面だけに入力してください。MuseのチャットやConnectorには渡さないでください。承認はデプロイ・課金を許可するものではありません。</p>
+<label>依頼ID<input id="request" autocomplete="off" spellcheck="false"></label>
+<label>ユーザー専用キー<input id="key" type="password" autocomplete="off" spellcheck="false"></label>
+<button id="review">内容を取得</button>
+<p id="message" role="status"></p><div id="details"></div>
+<section id="confirm"><label>確認のため公開先「owner/repository」を入力<input id="target" autocomplete="off" spellcheck="false"></label><button id="approve">この内容の公開を1回だけ承認</button></section>
+<script nonce="NONCE_PLACEHOLDER">
+'use strict';
+const byId=id=>document.getElementById(id);let review=null;
+byId('request').value=new URLSearchParams(location.search).get('id')||'';
+async function api(method,body){
+ const id=byId('request').value.trim();if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('依頼IDを確認してください');
+ const response=await fetch('/publication-approvals/'+encodeURIComponent(id),{method,headers:{'Authorization':'Bearer '+byId('key').value.trim(),'Content-Type':'application/json','ngrok-skip-browser-warning':'1'},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'omit'});
+ const value=await response.json();if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'処理に失敗しました');return value;
+}
+function render(value){
+ const box=byId('details');box.replaceChildren();
+ for(const [label,text] of [['公開先',value.owner+'/'+value.repository+(value.visibility==='private'?'（Private）':'（全世界に公開）')],['対象',value.project+' / main'],['コミット',value.commit],['公開範囲',value.history_commit_count+'コミット・現在'+value.files.length+'ファイル・履歴全体'+value.history_files.length+'ファイル'],['期限',new Date(value.expires_at*1000).toLocaleString()],['状態',value.state]]){
+  const p=document.createElement('p');p.textContent=label+': '+text;box.append(p);
+ }
+ for(const [label,text] of [['履歴と著者情報',value.commits.join('\n')],['履歴に含まれるファイル',value.history_files.join('\n')],['公開する全履歴の差分',value.changes]]){
+  const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent=label;pre.textContent=text;details.append(summary,pre);box.append(details);
+ }
+ const warning=document.createElement('p');warning.className='danger';warning.textContent='秘密情報の自動検査は完全ではありません。履歴と差分をご確認ください。この承認は公開1回だけに有効で、デプロイや課金は許可しません。';box.append(warning);
+}
+function clear(){review=null;byId('confirm').style.display='none';byId('target').value='';byId('details').textContent='';}
+byId('request').oninput=clear;byId('key').oninput=clear;
+byId('review').onclick=async()=>{clear();try{review=await api('GET');render(review);byId('message').textContent='内容を確認してください。履歴に含まれる全コミットと著者情報も公開されます。';if(review.state==='pending_approval'&&Date.now()/1000<review.expires_at)byId('confirm').style.display='block';}catch(e){byId('message').textContent=e.message;}};
+byId('approve').onclick=async()=>{try{if(!review||byId('target').value.trim()!==review.owner+'/'+review.repository)throw new Error('公開先を正確に入力してください');byId('approve').disabled=true;const result=await api('POST',{fingerprint:review.fingerprint});render(result);byId('message').textContent='承認しました。Museがこの依頼の実行結果を確認します。';byId('confirm').style.display='none';byId('key').value='';review=null;}catch(e){byId('message').textContent=e.message;}finally{byId('approve').disabled=false;}};
+</script></html>

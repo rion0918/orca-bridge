@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Muse Orca Bridge",
-    "version": "0.6.0"
+    "version": "0.6.4"
   },
   "paths": {
     "/status": {
@@ -457,6 +457,102 @@
         }
       }
     },
+    "/diagnostics/muse-approval/{probe_id}": {
+      "get": {
+        "summary": "Muse Approval Probe Status",
+        "description": "Read the number of test calls received. This does not verify consent.",
+        "operationId": "muse_approval_probe_status_diagnostics_muse_approval__probe_id__get",
+        "parameters": [
+          {
+            "name": "probe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Probe Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Muse Approval Probe",
+        "description": "Record one diagnostic receipt. No repository, deployment or payment is affected.",
+        "operationId": "muse_approval_probe_diagnostics_muse_approval__probe_id__post",
+        "parameters": [
+          {
+            "name": "probe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Probe Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects": {
       "get": {
         "summary": "List Projects",
@@ -814,8 +910,8 @@
     },
     "/projects/{project}/python-environment": {
       "post": {
-        "summary": "Python Environment",
-        "operationId": "python_environment_projects__project__python_environment_post",
+        "summary": "Prepare Python Environment",
+        "operationId": "prepare_python_environment_projects__project__python_environment_post",
         "parameters": [
           {
             "name": "project",
@@ -860,10 +956,415 @@
           }
         }
       }
+    },
+    "/projects/{project}/preview": {
+      "post": {
+        "summary": "Start Preview",
+        "operationId": "start_preview_projects__project__preview_post",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/previews/{preview_id}": {
+      "delete": {
+        "summary": "Stop Preview",
+        "operationId": "stop_preview_previews__preview_id__delete",
+        "parameters": [
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Preview Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/publication-requests": {
+      "post": {
+        "summary": "Request Publication",
+        "operationId": "request_publication_publication_requests_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/publication-requests/{id}": {
+      "get": {
+        "summary": "Publication Status",
+        "operationId": "publication_status_publication_requests__id__get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/publication-requests/{id}/execute": {
+      "post": {
+        "summary": "Execute Publication",
+        "description": "Create a new GitHub repository and push the pinned Git history. Sensitive write. The request must already have current independent user approval. When supplied, execution terms must match the approved snapshot.",
+        "operationId": "execute_publication_publication_requests__id__execute_post",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PublicationExecutionTerms"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Terms"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "CleanupRequest": {
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Paths"
+          },
+          "recursive": {
+            "type": "boolean",
+            "title": "Recursive",
+            "default": false
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": true
+          },
+          "empty_tree": {
+            "type": "boolean",
+            "title": "Empty Tree",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "paths"
+        ],
+        "title": "CleanupRequest"
+      },
+      "CleanupResponse": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "title": "Project"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paths"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project",
+          "paths",
+          "dry_run"
+        ],
+        "title": "CleanupResponse"
+      },
+      "CommitRequest": {
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Paths"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Message"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "paths",
+          "message"
+        ],
+        "title": "CommitRequest"
+      },
+      "CommitResponse": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "title": "Project"
+          },
+          "commit": {
+            "type": "string",
+            "title": "Commit"
+          },
+          "files": {
+            "type": "integer",
+            "title": "Files"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paths"
+          },
+          "published": {
+            "type": "boolean",
+            "const": false,
+            "title": "Published"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project",
+          "commit",
+          "files",
+          "paths",
+          "published"
+        ],
+        "title": "CommitResponse"
+      },
+      "EnvironmentExampleRequest": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 32768,
+            "title": "Content"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "EnvironmentExampleRequest"
+      },
+      "EnvironmentExampleResponse": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "title": "Project"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project",
+          "content"
+        ],
+        "title": "EnvironmentExampleResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -891,6 +1392,147 @@
           "name"
         ],
         "title": "NewProject"
+      },
+      "PublicationExecutionTerms": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Project"
+          },
+          "owner": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}$",
+            "title": "Owner"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$",
+            "title": "Repository"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "title": "Visibility"
+          },
+          "branch": {
+            "type": "string",
+            "const": "main",
+            "title": "Branch"
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$",
+            "title": "Commit"
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Fingerprint"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project",
+          "owner",
+          "repository",
+          "visibility",
+          "branch",
+          "commit",
+          "fingerprint"
+        ],
+        "title": "PublicationExecutionTerms"
+      },
+      "PublicationRequest": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Project"
+          },
+          "owner": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}$",
+            "title": "Owner"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$",
+            "title": "Repository"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "title": "Visibility",
+            "default": "public"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project",
+          "owner",
+          "repository"
+        ],
+        "title": "PublicationRequest"
+      },
+      "PythonEnvironmentResponse": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "title": "Project"
+          },
+          "python": {
+            "type": "string",
+            "title": "Python"
+          },
+          "offline": {
+            "type": "boolean",
+            "const": true,
+            "title": "Offline"
+          },
+          "tests_executed": {
+            "type": "boolean",
+            "const": false,
+            "title": "Tests Executed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project",
+          "python",
+          "offline",
+          "tests_executed"
+        ],
+        "title": "PythonEnvironmentResponse"
+      },
+      "RenameExampleResponse": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "title": "Project"
+          },
+          "renamed_to": {
+            "type": "string",
+            "const": ".env.example",
+            "title": "Renamed To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project",
+          "renamed_to"
+        ],
+        "title": "RenameExampleResponse"
       },
       "Task": {
         "properties": {
@@ -1013,199 +1655,6 @@
           "type"
         ],
         "title": "ValidationError"
-      },
-      "CommitRequest": {
-        "properties": {
-          "paths": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "minItems": 1,
-            "title": "Paths"
-          },
-          "message": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Message"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "paths",
-          "message"
-        ],
-        "title": "CommitRequest"
-      },
-      "EnvironmentExampleRequest": {
-        "properties": {
-          "content": {
-            "type": "string",
-            "title": "Content"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "content"
-        ],
-        "title": "EnvironmentExampleRequest"
-      },
-      "CleanupRequest": {
-        "properties": {
-          "paths": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "minItems": 1,
-            "title": "Paths"
-          },
-          "recursive": {
-            "type": "boolean",
-            "title": "Recursive",
-            "default": false
-          },
-          "dry_run": {
-            "type": "boolean",
-            "title": "Dry Run",
-            "default": false
-          },
-          "empty_tree": {
-            "type": "boolean",
-            "title": "Empty Tree",
-            "default": false
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "paths"
-        ],
-        "title": "CleanupRequest"
-      },
-      "EnvironmentExampleResponse": {
-        "properties": {
-          "project": {
-            "type": "string",
-            "title": "Project"
-          },
-          "content": {
-            "type": "string",
-            "title": "Content"
-          }
-        },
-        "type": "object",
-        "required": [
-          "project",
-          "content"
-        ],
-        "title": "EnvironmentExampleResponse"
-      },
-      "RenameExampleResponse": {
-        "properties": {
-          "project": {
-            "type": "string",
-            "title": "Project"
-          },
-          "renamed_to": {
-            "type": "string",
-            "const": ".env.example",
-            "title": "Renamed To"
-          }
-        },
-        "type": "object",
-        "required": [
-          "project",
-          "renamed_to"
-        ],
-        "title": "RenameExampleResponse"
-      },
-      "CommitResponse": {
-        "properties": {
-          "project": {
-            "type": "string",
-            "title": "Project"
-          },
-          "commit": {
-            "type": "string",
-            "title": "Commit"
-          },
-          "files": {
-            "type": "integer",
-            "title": "Files"
-          },
-          "published": {
-            "type": "boolean",
-            "const": false,
-            "title": "Published"
-          }
-        },
-        "type": "object",
-        "required": [
-          "project",
-          "commit",
-          "files",
-          "published"
-        ],
-        "title": "CommitResponse"
-      },
-      "CleanupResponse": {
-        "properties": {
-          "project": {
-            "type": "string",
-            "title": "Project"
-          },
-          "paths": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Paths"
-          },
-          "dry_run": {
-            "type": "boolean",
-            "title": "Dry Run"
-          }
-        },
-        "type": "object",
-        "required": [
-          "project",
-          "paths",
-          "dry_run"
-        ],
-        "title": "CleanupResponse"
-      },
-      "PythonEnvironmentResponse": {
-        "properties": {
-          "project": {
-            "type": "string",
-            "title": "Project"
-          },
-          "python": {
-            "type": "string",
-            "title": "Python"
-          },
-          "offline": {
-            "type": "boolean",
-            "const": true,
-            "title": "Offline"
-          },
-          "tests_executed": {
-            "type": "boolean",
-            "const": false,
-            "title": "Tests Executed"
-          }
-        },
-        "type": "object",
-        "required": [
-          "project",
-          "python",
-          "offline",
-          "tests_executed"
-        ],
-        "title": "PythonEnvironmentResponse"
       }
     },
     "securitySchemes": {

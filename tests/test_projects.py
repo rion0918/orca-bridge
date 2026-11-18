@@ -55,6 +55,15 @@ def test_home_catalog_is_blocked(catalog,monkeypatch):
     assert home['state']=='blocked'
     assert catalog.post('/tasks',json={'project':home['id'],'prompt':'edit'}).status_code==422
 
+def test_registered_bridge_workspace_is_advertised_as_blocked(catalog,monkeypatch):
+    monkeypatch.setattr(bridge,'orca',lambda *a,**k:{'repos':[],'repo':{'id':'fixture-repo'}})
+    project=catalog.post('/projects',json={'name':'bridge-runtime'}).json()
+    monkeypatch.setattr(bridge,'ROOT',Path(project['workspace_path']))
+    rows=catalog.get('/projects').json()['projects']
+    assert next(row for row in rows if row['id']==project['id'])['state']=='blocked'
+    assert project['id'] not in catalog.get('/policy').json()['projects']
+    assert catalog.post('/tasks',json={'project':project['id'],'prompt':'edit'}).status_code==422
+
 def test_existing_git_uses_orca_checkout(catalog,monkeypatch,tmp_path):
     source=tmp_path/'existing'; source.mkdir()
     subprocess.run(['git','init','--template=',str(source)],check=True,capture_output=True)

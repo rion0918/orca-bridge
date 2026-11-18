@@ -1,4 +1,4 @@
-"""Authenticated local bridge. Execution approval is a local CLI operation only."""
+"""Authenticated local development bridge with independent human publication approval."""
 import argparse
 import contextlib
 import hashlib
@@ -22,7 +22,7 @@ from starlette.responses import JSONResponse
 
 ROOT=Path(__file__).resolve().parent
 DATA=ROOT/'state'
-PROJECTS={'sandbox':ROOT/'sandbox'}
+PROJECTS={'sandbox':ROOT/'sandbox'} if (ROOT/'sandbox').is_dir() and os.environ.get('BRIDGE_DEFAULT_SANDBOX')!='0' else {}
 ORCA=os.environ.get('ORCA_CLI_COMMAND') or ('orca-dev' if os.environ.get('ORCA_DEV_REPO_ROOT') else shutil.which('orca'))
 ACTIVE=('launching','launch_unknown','running','cancel_requested')
 def autorun(): return os.environ.get('BRIDGE_AUTORUN_SANDBOX')=='1'
@@ -43,7 +43,7 @@ async def lifespan(app):
     done.set()
     if thread: thread.join(timeout=25)
 
-app=FastAPI(title='Muse Orca Bridge',version='0.6.0',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
+app=FastAPI(title='Muse Orca Bridge',version='0.6.4',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
 
 class BodyLimit:
     def __init__(self,app): self.app=app
@@ -398,7 +398,21 @@ def retry(id:str):
         prompt=t['prompt']
     return create(Task(prompt=prompt,project=t['project'],timeout_seconds=t['timeout'],execution_profile=json.loads(t['execution'] or '{}').get('profile','sol_low')),None)
 
+@contextlib.contextmanager
+def project_mutation():
+    import fcntl
+    DATA.mkdir(mode=0o700,parents=True,exist_ok=True)
+    fd=os.open(DATA/'project-mutation.lock',os.O_CREAT|os.O_RDWR,0o600)
+    try:
+        try: fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError: raise HTTPException(409,'Concurrency limit: project mutation in progress')
+        yield
+    finally: os.close(fd)
+
 def approve(id,automatic=False):
+    with project_mutation(): return approve_locked(id,automatic)
+
+def approve_locked(id,automatic=False):
     t=task(id)
     selected=json.loads(t['execution'] or '{}')
     current=checked_execution(selected.get('profile','sol_low'),selected.get('reason',''))
@@ -440,6 +454,24 @@ def policy():
             'critical_operations':{'deployment':'human approval and separate executor required','spending':'human approval and separate executor required'},
             'generated_code_network':False,'unknown_launch':'blocks subsequent executions'}
 
+@app.get('/diagnostics/muse-approval/{probe_id}',dependencies=[Depends(permission('read'))])
+def muse_approval_probe_status(probe_id:uuid.UUID):
+    """Read the number of test calls received. This does not verify consent."""
+    with transaction() as c:
+        c.execute('create table if not exists muse_approval_probes(id text primary key, received_count integer not null)')
+        row=c.execute('select received_count from muse_approval_probes where id=?',(str(probe_id),)).fetchone()
+    return {'probe_id':probe_id,'received_count':row['received_count'] if row else 0,'approval_verified':False}
+
+@app.post('/diagnostics/muse-approval/{probe_id}',dependencies=[Depends(permission('write'))])
+def muse_approval_probe(probe_id:uuid.UUID):
+    """Record one diagnostic receipt. No repository, deployment or payment is affected."""
+    with transaction() as c:
+        c.execute('create table if not exists muse_approval_probes(id text primary key, received_count integer not null)')
+        row=c.execute('''insert into muse_approval_probes values(?,1)
+            on conflict(id) do update set received_count=received_count+1
+            returning received_count''',(str(probe_id),)).fetchone()
+    return {'probe_id':probe_id,'received_count':row['received_count'],'approval_verified':False}
+
 def dispatch_once():
     if not autorun(): return
     with transaction() as c:
@@ -480,20 +512,38 @@ def new_project(request:NewProject):
     return projects.create(request.name)
 
 
+@contextlib.contextmanager
+def idle_project_operation():
+    with project_mutation():
+        with transaction() as c:
+            if c.execute('select count(*) from tasks where state in (?,?,?,?)',ACTIVE).fetchone()[0]:
+                raise HTTPException(409,'Wait for active tasks to settle')
+        yield
+
+def require_idle_project():
+    with idle_project_operation(): yield
+
+def require_no_bridge_credentials(content):
+    for key,value in os.environ.items():
+        if len(value)>7 and any(word in key.upper() for word in ('TOKEN','SECRET','API_KEY','PASSWORD')):
+            if value.encode('utf-8') in content:
+                raise HTTPException(409,'Credential detected; file operation refused')
+
+
 class CommitRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    paths:list[str]=Field(min_length=1)
-    message:str=Field(min_length=1)
+    paths:list[str]=Field(min_length=1,max_length=100)
+    message:str=Field(min_length=1,max_length=500)
 
 class EnvironmentExampleRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    content:str
+    content:str=Field(max_length=32768)
 
 class CleanupRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    paths:list[str]=Field(min_length=1)
+    paths:list[str]=Field(min_length=1,max_length=100)
     recursive:bool=False
-    dry_run:bool=False
+    dry_run:bool=True
     empty_tree:bool=False
 
 class EnvironmentExampleResponse(BaseModel):
@@ -508,6 +558,7 @@ class CommitResponse(BaseModel):
     project:str
     commit:str
     files:int
+    paths:list[str]
     published:Literal[False]
 
 class CleanupResponse(BaseModel):
@@ -533,7 +584,7 @@ def project_file(root,name,template=False):
             relative==Path('.') or '..' in relative.parts):
         raise HTTPException(422,'Path must be inside the project')
     for part in relative.parts:
-        if (part in ('.git','.aws','.codex') or part.endswith('.pem') or
+        if (part in ('.git','.aws','.codex','.agents') or part.endswith('.pem') or
                 (part.startswith('.env') and part!='.env.example')):
             raise HTTPException(422,'Protected project path')
     target=root
@@ -548,7 +599,7 @@ def example_content(content):
     pattern=r'''(?ms)^([ \t]*(?:export[ \t]+)?(?:BRIDGE_TOKEN|BRIDGE_READ_TOKEN)[ \t]*=)[ \t]*(?:"(?:\\.|[^"\\])*(?:"|\Z)|'(?:\\.|[^'\\])*(?:'|\Z)|[^\r\n]*)[^\r\n]*'''
     return re.sub(pattern,r'\1<redacted>',content)
 
-@app.post('/projects/{project}/environment-example',dependencies=[Depends(permission('write'))],response_model=RenameExampleResponse)
+@app.post('/projects/{project}/environment-example',dependencies=[Depends(permission('write')),Depends(require_idle_project)],response_model=RenameExampleResponse)
 def rename_environment_example(project:str):
     root=project_path(project)
     with project_io():
@@ -556,6 +607,7 @@ def rename_environment_example(project:str):
         target=project_file(root,'.env.example',template=True)
         if not source.is_file(): raise HTTPException(404,'Project file not found')
         if target.exists(): raise HTTPException(409,'Environment example already exists')
+        require_no_bridge_credentials(source.read_bytes())
         source.rename(target)
     return {'project':project,'renamed_to':'.env.example'}
 
@@ -564,12 +616,14 @@ def get_environment_example(project:str):
     root=project_path(project)
     with project_io():
         content=project_file(root,'.env.example',template=True).read_bytes().decode('utf-8')
+    require_no_bridge_credentials(content.encode('utf-8'))
     return {'project':project,'content':example_content(content)}
 
-@app.put('/projects/{project}/environment-example',dependencies=[Depends(permission('write'))],response_model=EnvironmentExampleResponse)
+@app.put('/projects/{project}/environment-example',dependencies=[Depends(permission('write')),Depends(require_idle_project)],response_model=EnvironmentExampleResponse)
 def put_environment_example(project:str,request:EnvironmentExampleRequest):
     root=project_path(project)
     with project_io():
+        require_no_bridge_credentials(request.content.encode('utf-8'))
         project_file(root,'.env.example',template=True).write_bytes(request.content.encode('utf-8'))
     return {'project':project,'content':example_content(request.content)}
 
@@ -583,15 +637,20 @@ def local_git(root,*args):
     except (OSError,subprocess.TimeoutExpired):
         raise HTTPException(409,'Local Git operation unavailable')
 
-@app.post('/projects/{project}/commit',dependencies=[Depends(permission('write'))],response_model=CommitResponse)
+@app.post('/projects/{project}/commit',dependencies=[Depends(permission('write')),Depends(require_idle_project)],response_model=CommitResponse)
 def commit_project(project:str,request:CommitRequest):
     root=project_path(project)
+    if project not in PROJECTS:
+        import projects
+        if not projects.record(project)['workspace']:
+            raise HTTPException(409,'Use a Bridge-owned workspace before committing')
     if not request.message.strip(): raise HTTPException(422,'Empty commit message')
     paths=[]
     with project_io():
         for name in request.paths:
             target=project_file(root,name)
             if not target.is_file(): raise HTTPException(404,'Existing project file required')
+            require_no_bridge_credentials(target.read_bytes())
             relative=target.relative_to(root).as_posix()
             if relative not in paths: paths.append(relative)
     repository=local_git(root,'rev-parse','--show-toplevel')
@@ -611,22 +670,28 @@ def commit_project(project:str,request:CommitRequest):
     head=local_git(root,'rev-parse','--verify','HEAD')
     if head.returncode or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}',head.stdout.strip()):
         raise HTTPException(409,'Cannot verify local commit')
-    return {'project':project,'commit':head.stdout.strip(),'files':len(paths),'published':False}
+    audit('local_commit',project)
+    return {'project':project,'commit':head.stdout.strip(),'files':len(paths),'paths':paths,'published':False}
 
-GENERATED_CACHES={'__pycache__','.pytest_cache','.mypy_cache','.ruff_cache'}
+GENERATED_CACHES={'__pycache__','.pytest_cache','.mypy_cache','.ruff_cache','.verification'}
 
 def cleanup_tree(root,target,empty_only):
     directories=[target]
     for directory in directories:
         for child in directory.iterdir():
-            project_file(root,child.relative_to(root).as_posix())
+            relative=child.relative_to(root)
+            project_file(root,relative.as_posix())
+            if any(part.startswith('.env') for part in relative.parts):
+                raise HTTPException(422,'Protected project path')
             if child.is_dir(): directories.append(child)
             elif empty_only: raise HTTPException(409,'Empty tree contains a file')
             elif not child.is_file(): raise HTTPException(422,'Unsupported cleanup target')
     return directories
 
-@app.post('/projects/{project}/cleanup',dependencies=[Depends(permission('write'))],response_model=CleanupResponse)
+@app.post('/projects/{project}/cleanup',dependencies=[Depends(permission('write')),Depends(require_idle_project)],response_model=CleanupResponse)
 def cleanup_project(project:str,request:CleanupRequest):
+    if request.recursive and request.empty_tree:
+        raise HTTPException(422,'Choose empty-tree or recursive cache cleanup')
     root=project_path(project)
     targets=[]
     paths=[]
@@ -634,23 +699,20 @@ def cleanup_project(project:str,request:CleanupRequest):
     with project_io():
         for name in request.paths:
             target=project_file(root,name)
-            if not target.exists(): raise HTTPException(404,'Project file not found')
+            if not target.exists(): continue
             relative=target.relative_to(root).as_posix()
             if relative in paths: continue
             directories=[]
-            if target.is_dir():
-                if request.recursive and target.name not in GENERATED_CACHES:
-                    raise HTTPException(422,'Recursive cleanup is limited to generated caches')
-                if request.empty_tree:
-                    directories=cleanup_tree(root,target,empty_only=True)
-                elif request.recursive:
-                    cleanup_tree(root,target,empty_only=False)
-                elif any(target.iterdir()):
-                    raise HTTPException(409,'Directory is not empty')
-            elif not target.is_file():
-                raise HTTPException(422,'Unsupported cleanup target')
-            elif request.empty_tree:
-                raise HTTPException(409,'Empty tree requires a directory')
+            if any(part.startswith('.env') for part in target.relative_to(root).parts) or not target.is_dir():
+                raise HTTPException(422,'Cleanup accepts ordinary project directories only')
+            if request.recursive and target.name not in GENERATED_CACHES:
+                raise HTTPException(422,'Recursive cleanup is limited to generated caches')
+            if request.empty_tree:
+                directories=cleanup_tree(root,target,empty_only=True)
+            elif request.recursive:
+                cleanup_tree(root,target,empty_only=False)
+            elif any(target.iterdir()):
+                raise HTTPException(409,'Directory is not empty')
             targets.append((target,directories))
             paths.append(relative)
         if not request.dry_run:
@@ -660,38 +722,88 @@ def cleanup_project(project:str,request:CleanupRequest):
                 if directories:
                     for directory in reversed(directories):
                         if directory.exists(): directory.rmdir()
-                elif target.is_dir() and request.recursive: shutil.rmtree(target)
-                elif target.is_dir(): target.rmdir()
-                else: target.unlink()
+                elif request.recursive: shutil.rmtree(target)
+                else: target.rmdir()
+            audit('workspace_cleanup',project)
     return {'project':project,'paths':paths,'dry_run':request.dry_run}
 
-@app.post('/projects/{project}/python-environment',dependencies=[Depends(permission('write'))],response_model=PythonEnvironmentResponse)
-def python_environment(project:str):
-    root=project_path(project)
-    # Share the execution-state lock with task approval while preparing the environment.
-    with transaction() as c:
-        c.execute('BEGIN IMMEDIATE')
-        if c.execute('select count(*) from tasks where state in (?,?,?,?)',ACTIVE).fetchone()[0]:
-            raise HTTPException(409,'Wait for active tasks to finish before preparing Python')
-        with project_io():
-            environment=project_file(root,'.venv')
-            project_file(root,'.venv/bin')
-            project_file(root,'.venv/pyvenv.cfg')
-            python=environment/'bin/python'
-            if environment.exists() and not environment.is_dir():
-                raise HTTPException(409,'Python environment path is not a directory')
-            if not (python.is_file() and (environment/'pyvenv.cfg').is_file()):
-                # venv uses the interpreter's bundled ensurepip wheels, with no downloads.
-                env={k:os.environ[k] for k in ('PATH','LANG','TMPDIR') if k in os.environ}
-                env.update(PIP_NO_INDEX='1',PIP_DISABLE_PIP_VERSION_CHECK='1')
-                try:
-                    prepared=subprocess.run([sys.executable,'-m','venv',str(environment)],
-                                            cwd=root,capture_output=True,text=True,timeout=60,env=env)
-                except (OSError,subprocess.TimeoutExpired):
-                    raise HTTPException(409,'Offline Python environment preparation failed')
-                if prepared.returncode or not (python.is_file() and (environment/'pyvenv.cfg').is_file()):
-                    raise HTTPException(409,'Offline Python environment preparation failed')
-    return {'project':project,'python':str(python),'offline':True,'tests_executed':False}
+@app.post('/projects/{project}/python-environment',dependencies=[Depends(permission('write')),Depends(require_idle_project)],response_model=PythonEnvironmentResponse)
+def prepare_python_environment(project:str):
+    import python_environment
+    return python_environment.prepare(project)
+
+
+@app.post('/projects/{project}/preview',dependencies=[Depends(permission('write'))])
+def start_preview(project:str):
+    import preview
+    with idle_project_operation():
+        return preview.create(project)
+
+@app.delete('/previews/{preview_id}',status_code=204,dependencies=[Depends(permission('write'))])
+def stop_preview(preview_id:str):
+    import preview
+    preview.revoke(preview_id)
+
+class PublicationRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    project:str=Field(min_length=1,max_length=160)
+    owner:str=Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9-]{0,38}$')
+    repository:str=Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$')
+    visibility:Literal['public','private']='public'
+
+class PublicationApproval(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    fingerprint:str=Field(min_length=1,max_length=64)
+
+class PublicationExecutionTerms(PublicationRequest):
+    visibility:Literal['public','private']=Field()
+    branch:Literal['main']
+    commit:str=Field(pattern=r'^[a-f0-9]{40}$')
+    fingerprint:str=Field(pattern=r'^[a-f0-9]{64}$')
+
+@app.post('/publication-requests',dependencies=[Depends(permission('write'))])
+def request_publication(request:PublicationRequest):
+    import publication
+    with idle_project_operation():
+        return publication.summary(publication.prepare(request.project,request.owner,request.repository,request.visibility))
+
+@app.get('/publication-requests/{id}',dependencies=[Depends(permission('read'))])
+def publication_status(id:str):
+    import publication
+    return publication.summary(publication.get(id))
+
+@app.post('/publication-requests/{id}/execute',dependencies=[Depends(permission('write'))],
+          description='Create a new GitHub repository and push the pinned Git history. '
+                      'Sensitive write. The request must already have current independent user approval. '
+                      'When supplied, execution terms must match the approved snapshot.')
+def execute_publication(id:str,terms:PublicationExecutionTerms|None=None):
+    import publication
+    with idle_project_operation():
+        return publication.summary(publication.execute(id,terms.model_dump() if terms else None))
+
+# Human-only routes deliberately excluded from the Muse connector contract.
+def publication_user(authorization:str=Header(default='')):
+    import publication
+    publication.human(authorization)
+
+@app.get('/publication-approvals/{id}',dependencies=[Depends(publication_user)],include_in_schema=False)
+def publication_review(id:str):
+    import publication
+    return publication.get(id)
+
+@app.post('/publication-approvals/{id}',dependencies=[Depends(publication_user)],include_in_schema=False)
+def approve_publication(id:str,request:PublicationApproval):
+    import publication
+    return publication.approve(id,request.fingerprint)
+
+@app.get('/publish-approval',include_in_schema=False)
+def publication_approval_page():
+    from fastapi.responses import HTMLResponse
+    nonce=__import__('secrets').token_urlsafe(24)
+    return HTMLResponse((ROOT/'publication_approval.html').read_text().replace('NONCE_PLACEHOLDER',nonce),headers={
+        'Cache-Control':'no-store','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer',
+        'Content-Security-Policy':f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"})
+
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()

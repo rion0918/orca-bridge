@@ -104,7 +104,7 @@ def test_commit_only_requested_existing_files(client, project, git_calls):
     (project/'unrelated.txt').write_text('unrelated')
     response = client.post('/projects/test/commit', json={'paths': ['chosen.txt'], 'message': 'local change'})
     assert response.status_code == 200
-    assert response.json() == {'project': 'test', 'commit': 'a'*40, 'files': 1, 'published': False}
+    assert response.json() == {'project': 'test', 'commit': 'a'*40, 'files': 1, 'paths': ['chosen.txt'], 'published': False}
     commands = [cmd for cmd, kw in git_calls]
     add = next(cmd for cmd in commands if 'add' in cmd)
     commit = next(cmd for cmd in commands if 'commit' in cmd)
@@ -182,7 +182,7 @@ def test_cleanup_empty_tree(client, project, cleanup_io_errors):
     body = {'paths': ['empty'], 'empty_tree': True}
     assert client.post('/projects/test/cleanup', json={**body, 'dry_run': True}).status_code == 200
     assert tree.exists()
-    assert client.post('/projects/test/cleanup', json=body).status_code == 200, cleanup_io_errors
+    assert client.post('/projects/test/cleanup', json={**body, 'dry_run': False}).status_code == 200, cleanup_io_errors
     assert not tree.exists()
     (tree/'nested').mkdir(parents=True)
     (tree/'nested/file').write_text('keep')
@@ -190,11 +190,15 @@ def test_cleanup_empty_tree(client, project, cleanup_io_errors):
     assert (tree/'nested/file').read_text() == 'keep'
 
 
-def test_cleanup_file_and_empty_directory(client, project, cleanup_io_errors):
-    (project/'file').write_text('remove')
+def test_cleanup_preserves_files_and_defaults_to_dry_run(client, project, cleanup_io_errors):
+    (project/'file').write_text('keep')
     (project/'empty').mkdir()
-    assert client.post('/projects/test/cleanup', json={'paths': ['file', 'empty']}).status_code == 200, cleanup_io_errors
-    assert not (project/'file').exists() and not (project/'empty').exists()
+    assert client.post('/projects/test/cleanup', json={'paths': ['empty', 'file'], 'dry_run': False}).status_code == 422
+    assert (project/'file').exists() and (project/'empty').is_dir()
+    assert client.post('/projects/test/cleanup', json={'paths': ['empty']}).json()['dry_run'] is True
+    assert (project/'empty').is_dir()
+    assert client.post('/projects/test/cleanup', json={'paths': ['empty'], 'dry_run': False}).status_code == 200, cleanup_io_errors
+    assert not (project/'empty').exists()
 
 
 def test_symlinks_rejected(client, project):
@@ -218,22 +222,25 @@ def test_read_token_cannot_maintain_project(client, monkeypatch, method, suffix,
 
 
 def test_python_environment_offline(client, project, monkeypatch):
+    import python_environment
     calls = []
     def run(command, **kwargs):
         calls.append((command, kwargs))
-        (project/'.venv/bin').mkdir(parents=True)
-        (project/'.venv/bin/python').write_text('fixture')
-        (project/'.venv/pyvenv.cfg').write_text('fixture')
+        if command[2] == 'venv':
+            (project/'.venv/bin').mkdir(parents=True)
+            (project/'.venv/bin/python').write_text('fixture')
+            (project/'.venv/pyvenv.cfg').write_text('fixture')
         return SimpleNamespace(returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(python_environment.shutil, 'which', lambda _: '/usr/bin/uv')
     monkeypatch.setattr(bridge.subprocess, 'run', run)
     response = client.post('/projects/test/python-environment')
     assert response.status_code == 200
     assert response.json() == {'project': 'test', 'python': str(project/'.venv/bin/python'), 'offline': True, 'tests_executed': False}
-    assert len(calls) == 1
-    command, kwargs = calls[0]
-    assert command == [bridge.sys.executable, '-m', 'venv', str(project/'.venv')]
-    assert kwargs['env']['PIP_NO_INDEX'] == '1'
-    assert not any(key.startswith('BRIDGE_') for key in kwargs['env'])
+    assert len(calls) == 2
+    assert calls[0][0][:4] == ['/usr/bin/uv', '--no-config', 'venv', '--offline']
+    assert calls[1][0][2:6] == ['pip', 'install', '--offline', '--no-build']
+    assert calls[1][0][-1] == str(bridge.ROOT/'requirements.lock')
+    assert all(not any(key.startswith('BRIDGE_') for key in kwargs['env']) for _, kwargs in calls)
 
 
 @pytest.mark.parametrize('state', bridge.ACTIVE)
@@ -271,12 +278,12 @@ def test_environment_example_multiline_token_values(content):
     assert '<redacted>' in result
 
 
-def test_python_environment_reuses_local_environment(client, project, monkeypatch):
+def test_python_environment_refuses_to_execute_existing_interpreter(client, project, monkeypatch):
     (project/'.venv/bin').mkdir(parents=True)
     (project/'.venv/bin/python').write_text('fixture')
     (project/'.venv/pyvenv.cfg').write_text('fixture')
-    monkeypatch.setattr(bridge.subprocess, 'run', lambda *a, **kw: pytest.fail('Must reuse local environment'))
-    assert client.post('/projects/test/python-environment').status_code == 200
+    monkeypatch.setattr(bridge.subprocess, 'run', lambda *a, **kw: pytest.fail('Must not run the existing interpreter'))
+    assert client.post('/projects/test/python-environment').status_code == 409
 
 
 @pytest.mark.parametrize('path', ['.venv', '.venv/bin', '.venv/pyvenv.cfg'])
@@ -286,7 +293,7 @@ def test_python_environment_rejects_symlink_paths(client, project, monkeypatch, 
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(project/'target', target_is_directory=True)
     monkeypatch.setattr(bridge.subprocess, 'run', lambda *a, **kw: pytest.fail('Unsafe environment'))
-    assert client.post('/projects/test/python-environment').status_code == 422
+    assert client.post('/projects/test/python-environment').status_code == 409
 
 
 @pytest.mark.parametrize('result', [1, 0])
@@ -349,16 +356,14 @@ def test_cleanup_deletion_plan(client, project, monkeypatch, name, options):
         (target/'nested/leaf').mkdir(parents=True)
         expected = [('rmdir', target/'nested/leaf'), ('rmdir', target/'nested'), ('rmdir', target)]
     else:
-        (project/'file').write_text('remove')
-        expected = [('rmdir', target), ('unlink', project/'file')]
+        expected = [('rmdir', target)]
     calls = []
     monkeypatch.setattr(bridge.shutil, 'rmtree', lambda path: calls.append(('rmtree', path)))
     monkeypatch.setattr(bridge.Path, 'rmdir', lambda path: calls.append(('rmdir', path)))
-    monkeypatch.setattr(bridge.Path, 'unlink', lambda path: calls.append(('unlink', path)))
-    body = {'paths': [name] if options else [name, 'file'], **options}
+    body = {'paths': [name], **options}
     response = client.post('/projects/test/cleanup', json={**body, 'dry_run': True})
     assert response.status_code == 200, response.text
     assert calls == []
-    response = client.post('/projects/test/cleanup', json=body)
+    response = client.post('/projects/test/cleanup', json={**body, 'dry_run': False})
     assert response.status_code == 200, response.text
     assert calls == expected
