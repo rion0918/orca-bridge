@@ -87,7 +87,7 @@ Use the [OpenAPI schema](connector/openapi.json) and [connection example](connec
 
 ## Contributing
 
-Issues and pull requests are welcome. For bugs, include the macOS, Python, Orca, and Codex versions and a minimal reproduction with sensitive details removed.
+Issues and pull requests are welcome. See the [contribution guide](CONTRIBUTING.md) and [code of conduct](CODE_OF_CONDUCT.md). For vulnerabilities, use the private channel in the [security policy](SECURITY.md).
 
 ```sh
 .venv/bin/python -m pip install pytest

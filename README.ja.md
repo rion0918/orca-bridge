@@ -62,7 +62,7 @@ APIは[OpenAPI](connector/openapi.json)、トンネルの代替手段や設定�
 
 ## コントリビュート
 
-不具合を報告する際は、macOS・Python・Orca・Codexのバージョンと、秘密情報を含まない再現手順を添えてください。
+[貢献ガイド](CONTRIBUTING.md)と[行動規範](CODE_OF_CONDUCT.md)を参照してください。脆弱性は[セキュリティポリシー](SECURITY.md)の非公開窓口へ報告してください。
 
 ```sh
 .venv/bin/python -m pip install pytest

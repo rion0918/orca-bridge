@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/rion0918/orca-bridge/security/advisories/new
+    about: Use this form for authentication, isolation, and credential exposure issues.
