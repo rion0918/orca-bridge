@@ -2,9 +2,13 @@
 
 [English](README.md) · [対応OS](#対応os) · [Macで起動](#macでbridgeを起動する) · [Museと接続](#museと接続する)
 
-Orca Bridgeを使うと、自分のマシン上のOrcaに、Museから開発を頼めます。Museは進捗と結果を確認し、開発エージェントから質問が返ったら回答を送って作業を続けられます。同じHTTP APIを他のクライアントから使うこともできます。
+スマホのMuseから、自分のMacで動くOrcaに開発を頼めます。Orca Bridgeが依頼をOrcaに届け、進捗・ログ・実行結果をMuseに返します。Museは結果を見て、開発エージェントからの質問に答えたり、追加の修正を依頼したりできます。
+
+> Orca Bridgeで、プロジェクトの失敗しているテストを直して。再テストでまだ失敗するなら、もう一度修正して。変更内容と通ったテストを教えて。
 
 `Muse → HTTPS → Orca Bridge → Orca → 開発エージェント`
+
+Museからの依頼で、Orca経由でCodexがファイルを作成し、Museが結果を取得するまでを確認済みです。スマホから一度頼むだけで、追加修正と再テストまで人の操作なしで進むかは未検証です。
 
 ## 対応OS
 
@@ -81,7 +85,7 @@ Macの非公開 `.env` に `BRIDGE_AGENTS` を設定して、Bridgeを再起動�
 
 ## APIと利用範囲
 
-[OpenAPI仕様](connector/openapi.json)、[接続例](connector/connection.example.json)、[設定テンプレート](.env.example)、[技術リファレンス](docs/reference.ja.md)を参照してください。動いているBridgeの仕様は、認証付きの `GET /openapi.json` でも取得できます。
+他のクライアントも同じ認証付きHTTP APIを使えます。[OpenAPI仕様](connector/openapi.json)、[接続例](connector/connection.example.json)、[設定テンプレート](.env.example)、[技術リファレンス](docs/reference.ja.md)を参照してください。動いているBridgeの仕様は、認証付きの `GET /openapi.json` でも取得できます。
 
 - 初期設定ではMacでタスクを承認します。`BRIDGE_AUTORUN_SANDBOX=1` は実行可能なCodexタスクの自動実行を有効にし、既定のsandbox以外の対象プロジェクトにも適用されます。
 - 読み書き用トークンは設定済みの全対象プロジェクトを操作できます。機密情報のないテスト用プロジェクトから始めてください。依頼とログはホストに残り、自動削除されません。
