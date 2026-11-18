@@ -2,9 +2,13 @@
 
 [日本語](README.ja.md) · [Platform support](#platform-support) · [Quick start](#start-the-bridge-on-your-mac) · [Connect Muse](#connect-muse)
 
-Orca Bridge lets you ask Muse to run local development tasks through Orca on a machine you control. Muse can check progress, read results, and answer questions from the coding agent. Other clients can use the same HTTP API.
+Ask Muse on your phone to work on a project in Orca on your Mac. Orca Bridge sends the task to Orca and returns progress, logs, and results to Muse. Muse can use those results to answer the coding agent's questions or submit a follow-up task.
+
+> Use Orca Bridge to fix the failing tests in my project. Rerun them, and try one more fix if they still fail. Report what changed and which tests passed.
 
 `Muse → HTTPS → Orca Bridge → Orca → coding agent`
+
+An end-to-end smoke test confirmed that Muse can submit a task, have Codex create a file through Orca, and read the result. The unattended flow from a single phone request through a follow-up fix and retest remains unverified.
 
 ## Platform support
 
@@ -82,7 +86,7 @@ Set `BRIDGE_AGENTS` in the host's private `.env` and restart the Bridge. The def
 
 ## API and scope
 
-See the [OpenAPI schema](connector/openapi.json), [connection example](connector/connection.example.json), and [environment template](.env.example). The live schema is available at authenticated `GET /openapi.json`.
+Other clients can use the same authenticated HTTP API. See the [OpenAPI schema](connector/openapi.json), [connection example](connector/connection.example.json), and [environment template](.env.example). The live schema is available at authenticated `GET /openapi.json`.
 
 - Tasks require local approval by default. `BRIDGE_AUTORUN_SANDBOX=1` enables automatic execution for eligible Codex tasks across eligible projects, including projects outside the default sandbox.
 - The read/write token can operate across configured projects. Start with a test project that contains no sensitive data. Task data and logs stay on the host and have no automatic expiry.
