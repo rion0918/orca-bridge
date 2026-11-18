@@ -1,8 +1,82 @@
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
 import bridge,runner
 from test_bridge import client
+
+@pytest.mark.parametrize(('kind','profile'), [('implementation','sol_low'),('design','sol_high'),('recovery','sol_max')])
+def test_routes_by_work_kind(client,kind,profile):
+    r=client.post('/tasks',json={'project':'test','prompt':'work','work_kind':kind})
+    assert r.status_code==200
+    assert r.json()['execution']['profile']==profile
+
+def test_claude_only_routes_to_a_manually_approved_task(client,monkeypatch):
+    import model_policy
+    monkeypatch.setenv('BRIDGE_AGENTS','claude')
+    monkeypatch.setenv('BRIDGE_AUTORUN_SANDBOX','1')
+    monkeypatch.setattr(model_policy,'claude_state',lambda:'subscription')
+    monkeypatch.setattr(model_policy,'availability',lambda _:model_policy.claude_availability())
+    r=client.post('/tasks',json={'project':'test','prompt':'review this design','work_kind':'design'})
+    assert r.status_code==200, r.text
+    task=r.json()
+    assert task['execution']['agent']=='claude'
+    assert task['execution']['profile']=='claude_design'
+    assert task['state']=='pending_approval'
+    assert bridge.task(task['id'])['state']=='pending_approval'
+    with pytest.raises(bridge.HTTPException):
+        bridge.approve(task['id'],automatic=True)
+
+def test_auto_skips_exhausted_provider(client,monkeypatch):
+    import model_policy
+    monkeypatch.setenv('BRIDGE_AGENTS','codex,claude')
+    monkeypatch.setattr(model_policy,'availability',lambda profile:
+        {'status':'exhausted'} if profile.startswith('sol_') else
+        {'status':'available','automatic':False,'quota_status':'unknown'})
+    r=client.post('/tasks',json={'project':'test','prompt':'work'})
+    assert r.status_code==200, r.text
+    assert r.json()['execution']['agent']=='claude'
+
+def test_claude_api_billing_auth_is_not_eligible(client,monkeypatch):
+    import model_policy
+    monkeypatch.setenv('BRIDGE_AGENTS','claude')
+    monkeypatch.setattr(model_policy.shutil,'which',lambda _: '/fixture/claude')
+    def inspect(args,**kwargs):
+        assert 'ANTHROPIC_API_KEY' not in kwargs['env']
+        stdout='2.1.319 (Claude Code)' if args[-1]=='--version' else '{"authMethod":"api_key"}'
+        return SimpleNamespace(returncode=0,stdout=stdout)
+    monkeypatch.setattr(model_policy.subprocess,'run',inspect)
+    monkeypatch.setattr(model_policy,'availability',lambda _:model_policy.claude_availability())
+    r=client.post('/tasks',json={'project':'test','prompt':'work'})
+    assert r.status_code==409
+    assert r.json()['detail']['availability']['authentication_status']=='subscription_required'
+
+def test_claude_runner_reads_result_after_local_approval(client,monkeypatch):
+    import model_policy
+    monkeypatch.setenv('BRIDGE_AGENTS','claude')
+    monkeypatch.setattr(model_policy,'availability',lambda _:{'status':'available','automatic':False})
+    monkeypatch.setattr(bridge,'orca',lambda *a,**kw:{'handle':'fixture'})
+    task=client.post('/tasks',json={'project':'test','prompt':'draft a change'}).json()
+    assert bridge.approve(task['id'])['state']=='launching'
+    event={'type':'result','is_error':False,'result':json.dumps({'outcome':'completed','summary':'Drafted'})}
+    script=f"import sys; sys.stdin.read(); print({json.dumps(event)!r})"
+    monkeypatch.setattr(runner,'command',lambda *a:[sys.executable,'-c',script])
+    runner.run(task['id'])
+    result=client.get('/tasks/'+task['id']+'/result').json()
+    assert result['state']=='succeeded'
+    assert result['handoff']=={'outcome':'completed','summary':'Drafted'}
+
+def test_claude_command_uses_only_file_tools(monkeypatch):
+    import model_policy
+    monkeypatch.setattr(model_policy.shutil,'which',lambda _: '/fixture/claude')
+    cmd=runner.command(Path('/tmp/project'),'claude_implementation')
+    assert '--restricted' in cmd and '--safe-mode' in cmd
+    assert cmd[cmd.index('--tools')+1]=='Read,Glob,Grep,Edit,Write'
+    assert cmd[cmd.index('--disallowedTools')+1]=='mcp__*'
+    settings=json.loads(cmd[cmd.index('--settings')+1])
+    assert settings['permissions']['blockReadsOutsideWorkingDirectories']
+    assert settings['permissions']['blockWritesOutsideWorkingDirectories']
 
 def test_default_profile_pins_sol_low(client):
     t=client.post('/tasks',json={'project':'test','prompt':'implement'}).json()

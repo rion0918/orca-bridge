@@ -174,9 +174,11 @@ class Task(BaseModel):
     project:str='sandbox'
     timeout_seconds:int=Field(default=300,ge=10,le=900)
     operation:Literal['development','deployment','spending']='development'
-    execution_profile:Literal['sol_low','sol_high','sol_max','hydrogen_high','argon_high']='sol_low'
+    execution_profile:Literal['auto','sol_low','sol_high','sol_max','hydrogen_high','argon_high',
+                              'claude_implementation','claude_design','claude_recovery']='auto'
     execution_reason:str=Field(default='',max_length=500)
     continues_task:str|None=Field(default=None, max_length=36)
+    work_kind:Literal['implementation','design','recovery']='implementation'
 
 class TaskHandoff(BaseModel):
     model_config=ConfigDict(extra='forbid', str_strip_whitespace=True)
@@ -241,26 +243,58 @@ def available_project_ids():
 
 def checked_execution(profile,reason=''):
     import model_policy
+    provider=model_policy.PROFILES[profile]['agent']
+    if provider in model_policy.ROUTES and provider not in model_policy.enabled_agents():
+        raise HTTPException(409,{'code':'agent_not_enabled','agent':provider})
     status=model_policy.availability(profile)
     if status['status']!='available':
         raise HTTPException(409,{'code':'model_quota_'+status['status'],'profile':profile,'availability':status})
-    if status.get('execution_ready') is False:
+    if provider not in model_policy.ROUTES or status.get('execution_ready') is False:
         raise HTTPException(409,{'code':'model_execution_not_ready','profile':profile,'availability':status})
-    return model_policy.selection(profile,reason)
+    return {**model_policy.selection(profile,reason),
+            'requires_approval':provider=='claude' or not status.get('automatic',True)}
+
+def route_execution(t):
+    import model_policy
+    if t.execution_profile!='auto':
+        return {**checked_execution(t.execution_profile,t.execution_reason),'work_kind':t.work_kind}
+    blocked=[]
+    for agent in model_policy.enabled_agents():
+        try:
+            selected=checked_execution(model_policy.ROUTES[agent][t.work_kind],t.execution_reason)
+        except HTTPException as error:
+            blocked.append(error)
+        else:
+            return {**selected,'work_kind':t.work_kind}
+    if len(blocked)==1: raise blocked[0]
+    raise HTTPException(409,{'code':'no_available_agent','candidates':[error.detail for error in blocked]})
 
 @app.get('/models',dependencies=[Depends(permission('read'))])
 def models():
     import model_policy
-    return {'profiles':[{'profile':key,**value,'availability':model_policy.availability(key)} for key,value in model_policy.PROFILES.items()],
-            'default':'sol_low','extra_credit_fallback':False,'quota_cache_seconds':60}
+    enabled=model_policy.enabled_agents()
+    return {'profiles':[{'profile':key,**value,'availability':model_policy.availability(key)
+                         if value['agent'] in enabled else {'status':'disabled'}}
+                        for key,value in model_policy.PROFILES.items()],
+            'default':'auto','enabled_agents':enabled,'work_kinds':list(model_policy.ROUTES['codex']),
+            'extra_credit_fallback':False,'quota_cache_seconds':60}
 
 @app.get('/agents',dependencies=[Depends(permission('read'))])
 def agents():
-    verified,state=codex_authentication()
-    return {'agents':[{'id':'codex','cli_installed':bool(shutil.which('codex')),'enabled':True},
+    import model_policy
+    enabled=model_policy.enabled_agents()
+    codex_enabled='codex' in enabled
+    claude_enabled='claude' in enabled
+    verified,state=codex_authentication() if codex_enabled else (False,'disabled')
+    claude_state=model_policy.claude_state() if claude_enabled else 'disabled'
+    return {'agents':[{'id':'codex','cli_installed':bool(shutil.which('codex')),'enabled':codex_enabled,
+                       'authentication_status':state},
+                      {'id':'claude','cli_installed':bool(shutil.which('claude')),'enabled':claude_enabled,
+                       'authentication_status':claude_state,'approval':'local for every execution','shell_tools':False},
                       {'id':'antigravity','cli_installed':bool(shutil.which('agy')),'enabled':False,
-                       'disabled_reason':'quota exhausted at verification; execution safety audit pending'}],
-            'authentication_verified':verified,'authentication_status':state,
+                       'disabled_reason':'execution safety audit pending'}],
+            'authentication_verified':verified or claude_state=='subscription',
+            'authentication_status':'logged_in' if verified or claude_state=='subscription' else (state if codex_enabled else claude_state),
             'authentication_check':'local_cli_login_status',
             'authentication_note':'Checks local sign-in only; does not send a model request.',
             'model_catalog':'GET /models','projects':available_project_ids(),'project_catalog':'GET /projects','approval':'automatic for isolated development; critical actions disabled pending human review' if autorun() else 'local CLI for every execution'}
@@ -280,13 +314,20 @@ def create(t:Task,idempotency_key:str|None=Header(default=None,max_length=128)):
     # Preserve idempotency fingerprints already stored by older installations.
     exclude={'continues_task'} if t.continues_task is None else set()
     fingerprint=hashlib.sha256(t.model_dump_json(exclude=exclude).encode()).hexdigest()
+    def replay_matches(row):
+        if row['fingerprint']==fingerprint: return True
+        if 'work_kind' in json.loads(row['execution'] or '{}') or 'work_kind' in t.model_fields_set:
+            return False
+        old=t.model_copy(update={'execution_profile':'sol_low'}) if t.execution_profile=='auto' else t
+        digest=hashlib.sha256(old.model_dump_json(exclude=exclude|{'work_kind'}).encode()).hexdigest()
+        return row['fingerprint']==digest
     if idempotency_key:
         with transaction() as c:
             existing=c.execute('select * from tasks where idem=?',(idempotency_key,)).fetchone()
         if existing:
-            if existing['fingerprint']!=fingerprint: raise HTTPException(409,'Idempotency key reused with different request')
+            if not replay_matches(existing): raise HTTPException(409,'Idempotency key reused with different request')
             return public(dict(existing))
-    execution=checked_execution(t.execution_profile,t.execution_reason)
+    execution=route_execution(t)
     if not t.prompt.strip(): raise HTTPException(422,'Empty prompt')
     id=str(uuid.uuid4())
     with transaction() as c:
@@ -294,7 +335,7 @@ def create(t:Task,idempotency_key:str|None=Header(default=None,max_length=128)):
         if idempotency_key:
             row=c.execute('select * from tasks where idem=?',(idempotency_key,)).fetchone()
             if row:
-                if row['fingerprint']!=fingerprint: raise HTTPException(409,'Idempotency key reused with different request')
+                if not replay_matches(row): raise HTTPException(409,'Idempotency key reused with different request')
                 return public(dict(row))
         if c.execute('select count(*) from tasks where state in ("pending_approval","queued")').fetchone()[0]>=100:
             raise HTTPException(429,'Approval queue full')
@@ -306,7 +347,8 @@ def create(t:Task,idempotency_key:str|None=Header(default=None,max_length=128)):
                 raise HTTPException(409,'This consultation already has a continuation')
         now=time.time()
         c.execute('insert into tasks(id,project,prompt,state,created,updated,idem,fingerprint,timeout,execution,continues_task) values(?,?,?,?,?,?,?,?,?,?,?)',
-                  (id,t.project,t.prompt,'queued' if autorun() else 'pending_approval',now,now,idempotency_key,fingerprint,t.timeout_seconds,json.dumps(execution),t.continues_task))
+                  (id,t.project,t.prompt,'queued' if autorun() and not execution['requires_approval'] else 'pending_approval',
+                   now,now,idempotency_key,fingerprint,t.timeout_seconds,json.dumps(execution),t.continues_task))
     audit('submitted',id)
     return public(task(id))
 
@@ -359,8 +401,9 @@ def retry(id:str):
 def approve(id,automatic=False):
     t=task(id)
     selected=json.loads(t['execution'] or '{}')
-    checked_execution(selected.get('profile','sol_low'),selected.get('reason',''))
+    current=checked_execution(selected.get('profile','sol_low'),selected.get('reason',''))
     if automatic and not autorun(): raise HTTPException(403,'Automatic execution is disabled')
+    if automatic and current['requires_approval']: raise HTTPException(409,'This agent requires local approval')
     with transaction() as c:
         if c.execute('select count(*) from tasks where state in (?,?,?,?)',ACTIVE).fetchone()[0]:
             raise HTTPException(409,'Concurrency limit is one; reconcile unknown executions first')
@@ -659,4 +702,7 @@ if __name__=='__main__':
         with transaction() as c:
             print(json.dumps([public(dict(r)) for r in c.execute('select * from tasks order by created desc limit 100')],indent=2))
     elif a.action=='show': print(json.dumps(task(a.id),ensure_ascii=False,indent=2))
-    else: print(json.dumps(approve(a.id),indent=2))
+    else:
+        from serve import load
+        load()
+        print(json.dumps(approve(a.id),indent=2))

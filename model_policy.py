@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -27,7 +28,40 @@ PROFILES={
  'sol_max':{'agent':'codex','model':'gpt-6.1-sol','effort':'max','purpose':'difficult repeated failures'},
  'hydrogen_high':{'agent':'antigravity','model':'gemini-4-hydrogen-high','effort':'high','purpose':'implementation from a clear plan'},
  'argon_high':{'agent':'antigravity','model':'gemini-4-argon-high','effort':'high','purpose':'difficult repeated failures or alternate analysis'},
+ 'claude_implementation':{'agent':'claude','model':'sonnet','effort':'low','purpose':'routine implementation'},
+ 'claude_design':{'agent':'claude','model':'sonnet','effort':'high','purpose':'specifications and design'},
+ 'claude_recovery':{'agent':'claude','model':'opus','effort':'high','purpose':'difficult repeated failures'},
 }
+ROUTES={
+ 'codex':{'implementation':'sol_low','design':'sol_high','recovery':'sol_max'},
+ 'claude':{kind:'claude_'+kind for kind in ('implementation','design','recovery')},
+}
+
+def enabled_agents():
+ return tuple(dict.fromkeys(agent.strip() for agent in os.environ.get('BRIDGE_AGENTS','codex').split(',')
+                            if agent.strip() in ROUTES))
+
+def claude_state():
+ executable=shutil.which('claude')
+ if not executable:return 'cli_missing'
+ try:
+  version=subprocess.run([executable,'--version'],capture_output=True,text=True,timeout=5,env=clean_env())
+  match=re.match(r'^(\d+)\.(\d+)\.(\d+)\b',version.stdout)
+  if version.returncode or not match or tuple(map(int,match.groups()))<(2,1,319):
+   return 'cli_version_unsupported'
+  auth=subprocess.run([executable,'auth','status'],capture_output=True,text=True,timeout=5,env=clean_env())
+  if auth.returncode==1:return 'not_logged_in'
+  if auth.returncode:return 'unknown'
+  data=json.loads(auth.stdout)
+  return 'subscription' if isinstance(data,dict) and data.get('authMethod')=='claude.ai' else 'subscription_required'
+ except (OSError,ValueError,subprocess.TimeoutExpired):
+  return 'unknown'
+
+def claude_availability():
+ state=claude_state()
+ # Login status does not report subscription quota or extra usage settings.
+ return {'status':'available' if state=='subscription' else 'unknown','windows':[],
+         'automatic':False,'quota_status':'unknown','authentication_status':state}
 _cache={}
 _lock=threading.Lock()
 
@@ -93,6 +127,7 @@ def summarize_agy(groups,model):
 def availability(profile):
  config=PROFILES[profile]
  provider=config['agent']
+ if provider=='claude':return claude_availability()
  now=time.monotonic()
  with _lock:
   saved=_cache.get(provider)
@@ -114,6 +149,23 @@ def availability(profile):
 
 def selection(profile,reason=''):
  return {'profile':profile,**PROFILES[profile],'reason':reason or 'selected execution profile'}
+
+def claude_command(profile):
+ config=PROFILES[profile]
+ executable=shutil.which('claude')
+ if not executable:raise RuntimeError('claude_not_installed')
+ settings={'permissions':{'defaultMode':'dontAsk','blockReadsOutsideWorkingDirectories':True,
+              'blockWritesOutsideWorkingDirectories':True,'denyInsteadOfPrompting':True,
+              'deny':[f'{tool}({path})' for tool in ('Read','Edit','Write')
+                      for path in ('.env*','**/.env*','**/.git/**','**/.claude/**','**/.codex/**',
+                                   '**/.aws/**','**/.ssh/**','**/*.pem','**/*.key')]},
+           'disableAllHooks':True}
+ tools='Read,Glob,Grep,Edit,Write'
+ return [executable,'--print','--restricted','--safe-mode','--no-session-persistence',
+         '--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disallowedTools','mcp__*',
+         '--tools',tools,'--allowedTools',tools,'--permission-mode','dontAsk',
+         '--settings',json.dumps(settings),'--model',config['model'],'--effort',config['effort'],
+         '--output-format','json']
 
 def antigravity_command(project,profile):
  config=PROFILES[profile]

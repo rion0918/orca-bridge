@@ -2,12 +2,12 @@
 
 [日本語README](../README.ja.md) · [English](../README.md)
 
-macOS上のOrcaとCodex CLIをBearer認証付きHTTP APIから利用する実験的なローカルBridgeです。タスク受付、ローカル承認、実行状況・結果・ログ取得を提供します。MITで公開している実験的なソフトウェアです。
+macOS上のOrcaと開発エージェントをBearer認証付きHTTP APIから利用する実験的なローカルBridgeです。タスク受付、ローカル承認、実行状況・結果・ログ取得を提供します。MITで公開している実験的なソフトウェアです。
 
 ## 前提条件
 
 - macOS、Python 3.10以上（開発環境は3.13）。
-- OrcaアプリとCLI、ログイン済みのCodex CLIが必須です。CLIの設定・権限形式に互換性があることを確認してください。
+- OrcaアプリとCLI、利用する開発エージェントへのログインが必要です。CLIの設定・権限形式に互換性があることを確認してください。
 - トンネル利用時のみngrokまたはcloudflaredが必要です。ngrokはPATHまたは.tools/ngrok、cloudflaredは.tools/cloudflaredを使用。バイナリは同梱しません。
 - Antigravityは現在無効です。CLIや残量があっても実行できません。
 - requirements.lockの固定版を導入できる環境が必要です。最低Pythonバージョン表記だけで全依存の互換性を保証しません。
@@ -36,6 +36,7 @@ pyproject.tomlはorca-bridge 0.6.0を定義し、requirements.lockを依存定�
 | --- | --- |
 | BRIDGE_TOKEN | 未設定。初回load時に生成する読み書き用トークン。空では認証不可 |
 | BRIDGE_READ_TOKEN | 未設定。初回load時に生成する読み取り専用トークン |
+| BRIDGE_AGENTS | 既定はcodex。codex,claudeなど、優先順に指定。Claudeは常にローカル承認 |
 | BRIDGE_AUTORUN_SANDBOX | 未設定（無効）。1で開発を自動実行。名前に反してsandbox以外も対象 |
 | ORCA_CLI_COMMAND | 未設定。Orcaの実行ファイル名またはパス。引数は含めない |
 | ORCA_DEV_REPO_ROOT | 未設定。設定がある場合、ORCA_CLI_COMMAND未指定時はorca-devを使用 |
@@ -81,7 +82,7 @@ client.pyは.envから読み書きトークンを読み込みます。
 .venv/bin/python client.py retry TASK_ID
 ~~~
 
-既定ではpending_approvalです。次のローカル操作で内容を確認し承認します。bridge.pyは.envを自動ロードしません。承認時にも残量を再確認します。
+既定ではpending_approvalです。次のローカル操作で内容を確認し承認します。ローカル承認コマンドは.envから現在のエージェント設定を読み込みます。承認時にも残量を再確認します。
 
 ~~~sh
 .venv/bin/python bridge.py list
@@ -89,7 +90,7 @@ client.pyは.envから読み書きトークンを読み込みます。
 .venv/bin/python bridge.py approve TASK_ID
 ~~~
 
-承認HTTP APIはありません。承認後、OrcaのターミナルがBridgeと同じPython解釈系でrunner.pyを起動します。BRIDGE_AUTORUN_SANDBOX=1でserve.pyを起動するとqueuedから自動実行します。sandboxに限らず全ての許可プロジェクトが対象です。通常フォルダの直接編集も含むことを理解したうえで設定してください。
+承認HTTP APIはありません。承認後、OrcaのターミナルがBridgeと同じPython解釈系でrunner.pyを起動します。BRIDGE_AUTORUN_SANDBOX=1でserve.pyを起動するとqueuedから自動実行します。Codex選択時のみ、sandboxに限らず全ての許可プロジェクトが対象です。通常フォルダの直接編集も含むことを理解したうえで設定してください。
 
 トンネルは外部公開を伴う任意操作です。利用者が公開を承認した場合のみ実行します。通常のローカル利用には不要です。
 
@@ -126,7 +127,7 @@ HTTPS経路の未認証401と認証済み応答を検査し、新経路の確認
 | POST | /tasks/{id}/retry | 確定した失敗等の再試行 |
 | GET | /openapi.json | 認証付き動的仕様。同梱仕様の18操作からは除外 |
 
-タスクはprompt、project（既定sandbox）、timeout_seconds（10〜900、既定300）、operation（既定development）、execution_profile、execution_reasonを受け付けます。未知フィールドは禁止です。deployment/spendingは409で拒否します。プロンプトは最大8000文字、空白のみは拒否。HTTP本文上限32768バイト、待ち行列上限100件、実行同時数は1です。
+タスクはprompt、project（既定sandbox）、timeout_seconds（10〜900、既定300）、operation（既定development）、execution_profile、execution_reason、work_kindを受け付けます。未知フィールドは禁止です。deployment/spendingは409で拒否します。プロンプトは最大8000文字、空白のみは拒否。HTTP本文上限32768バイト、待ち行列上限100件、実行同時数は1です。
 
 追加のプロジェクト操作も既存のプロジェクトIDとパス解決を使います。任意のプロジェクトパスは指定できません。ファイル操作のpathsはプロジェクト相対パスで、範囲外、シンボリックリンク、.git・.aws・.codex、.env系、PEMは422で拒否します。.env.exampleのみテンプレート専用操作で扱い、.envは扱いません。欠落ファイルは404、状態やファイル操作の競合は409です。
 
@@ -148,17 +149,15 @@ python-environmentは全プロジェクトの実行中・状態不明タスク�
 
 仕様判断が必要なタスクは、結果の `handoff.outcome` に `needs_decision` を返せます。同じプロジェクトで `continues_task` に元のタスクIDを指定すると、相談履歴を引き継いで続行します。
 
-モデルは任意指定・自動発見ではなく固定5プロファイルです。
+タスクの `work_kind` は実装 `implementation`（既定）、設計 `design`、難しい修正 `recovery` の3種類です。モデルは `BRIDGE_AGENTS` の優先順と認証・利用可否から決めます。外部から任意のモデル名は指定できません。
 
-| プロファイル | モデル | effort | 実行 |
-| --- | --- | --- | --- |
-| sol_low（既定） | gpt-6.1-sol | low | Codex |
-| sol_high | gpt-6.1-sol | high | Codex |
-| sol_max | gpt-6.1-sol | max | Codex |
-| hydrogen_high | gemini-4-hydrogen-high | high | Antigravity・無効 |
-| argon_high | gemini-4-argon-high | high | Antigravity・無効 |
+| 作業 | Codex | Claude Code（試験対応） |
+| --- | --- | --- |
+| 実装 | sol_low | claude_implementation（Sonnet / low） |
+| 設計 | sol_high | claude_design（Sonnet / high） |
+| 難しい修正 | sol_max | claude_recovery（Opus / high） |
 
-残量は60秒キャッシュし、枯渇・不明なら実行を止めます。Codexの残量は契約枠で、モデル固有とは限りません。追加クレジット購入・有料枠へのフォールバックはありません。/agentsはローカルのcodex login statusを確認し、モデル要求を送りません。通常実行と残量照会には各CLI・サービスへの接続が必要です。
+Codexの契約枠は60秒キャッシュし、枯渇・不明なら実行しません。Claudeはサブスクリプションでのログインのみ受け付けます。残量と追加使用の設定は取得できないため、利用者が追加使用を無効にし、毎回Macで承認します。Claudeではファイル操作のみ可能で、テストの実行は対象外です。Antigravityは隔離・取消を検証するまで無効です。
 
 ## セキュリティと隔離の限界
 
@@ -175,7 +174,8 @@ state/にはDB・監査・実行ログを保存します。DB・ログファイ�
 | 機能 | 状況 |
 | --- | --- |
 | 認証、読み取り権限、ローカル承認 | 対応 |
-| 開発の自動実行 | 明示設定で対応。全許可プロジェクトが対象 |
+| 開発の自動実行 | Codexのみ明示設定で対応。全許可プロジェクトが対象 |
+| Claude Code実行 | ファイル操作に限定した試験対応。Macで個別承認 |
 | キャンセル、タイムアウト | 対応。外部プロセス状態による限界あり |
 | 再試行 | failed/timed_out/cancelledに限定 |
 | Git専用コピー、フォルダ、新規作成 | 対応 |
